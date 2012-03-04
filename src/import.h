@@ -38,6 +38,8 @@ struct Import : Dsymbol
     Identifiers names;
     Identifiers aliases;
 
+    AliasDeclarations aliasdecls;
+
     Module *mod;
     Package *pkg;               // leftmost package/module
 
@@ -52,6 +54,7 @@ struct Import : Dsymbol
     void semantic(Scope *sc);
     void semantic2(Scope *sc);
     Dsymbol *search(Loc loc, Identifier *ident, int flags);
+    int overloadInsert(Dsymbol *s);
     void toCBuffer(OutBuffer *buf, HdrGenState *hgs);
     char *toChars();
 

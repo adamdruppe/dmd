@@ -67,6 +67,7 @@ CH= $C/cc.h $C/global.h $C/oper.h $C/code.h $C/type.h \
 	$C/dt.h $C/cgcv.h $C/el.h $C/iasm.h
 
 DMD_OBJS = \
+	microd.o \
 	access.o array.o attrib.o bcomplex.o blockopt.o \
 	cast.o code.o cg.o cg87.o cgxmm.o cgcod.o cgcs.o cgelem.o cgen.o \
 	cgreg.o cgsched.o class.o cod1.o cod2.o cod3.o cod4.o cod5.o \
@@ -93,6 +94,7 @@ else
 endif
 
 SRC = win32.mak posix.mak \
+	microd.c \
 	mars.c enum.c struct.c dsymbol.c import.c idgen.c impcnvgen.c \
 	identifier.c mtype.c expression.c optimize.c template.h \
 	template.c lexer.c declaration.c cast.c cond.h cond.c link.c \
