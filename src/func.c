@@ -310,13 +310,6 @@ void FuncDeclaration::semantic(Scope *sc)
     }
 #endif
 
-#ifdef IN_GCC
-    {
-        AggregateDeclaration *ad = parent->isAggregateDeclaration();
-        if (ad)
-            ad->methods.push(this);
-    }
-#endif
     sd = parent->isStructDeclaration();
     if (sd)
     {
@@ -616,9 +609,14 @@ void FuncDeclaration::semantic(Scope *sc)
                     }
                     if (ti)
                     {
-                        if (tintro && !tintro->equals(ti))
+                        if (tintro)
                         {
-                            error("incompatible covariant types %s and %s", tintro->toChars(), ti->toChars());
+                            if (!tintro->nextOf()->equals(ti->nextOf()) &&
+                                !tintro->nextOf()->isBaseOf(ti->nextOf(), NULL) &&
+                                !ti->nextOf()->isBaseOf(tintro->nextOf(), NULL))
+                            {
+                                error("incompatible covariant types %s and %s", tintro->toChars(), ti->toChars());
+                            }
                         }
                         tintro = ti;
                     }
@@ -928,6 +926,9 @@ void FuncDeclaration::semantic3(Scope *sc)
             }
             else
                 assert(!isNested() || sc->intypeof);    // can't be both member and nested
+#if IN_GCC
+            ad->methods.push(this);
+#endif
         }
         vthis = declareThis(sc2, ad);
 
@@ -939,6 +940,7 @@ void FuncDeclaration::semantic3(Scope *sc)
 #else
             Type *t;
 
+#ifndef IN_GCC
             if (global.params.is64bit)
             {   // Declare save area for varargs registers
                 Type *t = new TypeIdentifier(loc, Id::va_argsave_t);
@@ -956,6 +958,7 @@ void FuncDeclaration::semantic3(Scope *sc)
                     v_argsave->parent = this;
                 }
             }
+#endif
 
             if (f->linkage == LINKd)
             {   // Declare _arguments[]
@@ -1766,11 +1769,13 @@ int FuncDeclaration::equals(Object *o)
     Dsymbol *s = isDsymbol(o);
     if (s)
     {
-        FuncDeclaration *fd = s->isFuncDeclaration();
-        if (fd)
+        FuncDeclaration *fd1 = this->toAliasFunc();
+        FuncDeclaration *fd2 = s->isFuncDeclaration();
+        if (fd2)
         {
-            return toParent()->equals(fd->toParent()) &&
-                ident->equals(fd->ident) && type->equals(fd->type);
+            fd2 = fd2->toAliasFunc();
+            return fd1->toParent()->equals(fd2->toParent()) &&
+                fd1->ident->equals(fd2->ident) && fd1->type->equals(fd2->type);
         }
     }
     return FALSE;
@@ -2111,8 +2116,21 @@ int overloadApply(FuncDeclaration *fstart,
 
         if (fa)
         {
-            if (overloadApply(fa->funcalias, fp, param))
-                return 1;
+            if (fa->hasOverloads)
+            {
+                if (overloadApply(fa->funcalias, fp, param))
+                    return 1;
+            }
+            else
+            {
+                f = fa->toAliasFunc();
+                if (!f)
+                {   d->error("is aliased to a function");
+                    break;
+                }
+                if ((*fp)(param, f))
+                    return 1;
+            }
             next = fa->overnext;
         }
         else
@@ -2460,7 +2478,7 @@ MATCH FuncDeclaration::leastAsSpecialized(FuncDeclaration *g)
             e->type = p->type;
         }
         else
-            e = p->type->defaultInit();
+            e = p->type->defaultInitLiteral(0);
         args.tdata()[u] = e;
     }
 
@@ -2774,6 +2792,11 @@ int FuncDeclaration::isOverloadable()
     return 1;                   // functions can be overloaded
 }
 
+int FuncDeclaration::hasOverloads()
+{
+    return overnext != NULL;
+}
+
 enum PURE FuncDeclaration::isPure()
 {
     //printf("FuncDeclaration::isPure() '%s'\n", toChars());
@@ -2831,6 +2854,14 @@ int FuncDeclaration::isSafe()
     return ((TypeFunction *)type)->trust == TRUSTsafe;
 }
 
+bool FuncDeclaration::isSafeBypassingInference()
+{
+    if (flags & FUNCFLAGsafetyInprocess)
+        return false;
+    else
+        return isSafe();
+}
+
 int FuncDeclaration::isTrusted()
 {
     assert(type->ty == Tfunction);
@@ -2861,21 +2892,16 @@ bool FuncDeclaration::setUnsafe()
 
 int FuncDeclaration::isNested()
 {
-    //if (!toParent())
-        //printf("FuncDeclaration::isNested('%s') parent=%p\n", toChars(), parent);
-    //printf("\ttoParent2() = '%s'\n", toParent2()->toChars());
-    return ((storage_class & STCstatic) == 0) &&
-           (toParent2()->isFuncDeclaration() != NULL);
+    FuncDeclaration *f = toAliasFunc();
+    //printf("\ttoParent2() = '%s'\n", f->toParent2()->toChars());
+    return ((f->storage_class & STCstatic) == 0) &&
+           (f->toParent2()->isFuncDeclaration() != NULL);
 }
 
 int FuncDeclaration::needThis()
 {
     //printf("FuncDeclaration::needThis() '%s'\n", toChars());
-    int i = isThis() != NULL;
-    //printf("\t%d\n", i);
-    if (!i && isFuncAliasDeclaration())
-        i = ((FuncAliasDeclaration *)this)->funcalias->needThis();
-    return i;
+    return toAliasFunc()->isThis() != NULL;
 }
 
 int FuncDeclaration::addPreInvariant()
@@ -3117,17 +3143,34 @@ Parameters *FuncDeclaration::getParameters(int *pvarargs)
 
 // Used as a way to import a set of functions from another scope into this one.
 
-FuncAliasDeclaration::FuncAliasDeclaration(FuncDeclaration *funcalias)
+FuncAliasDeclaration::FuncAliasDeclaration(FuncDeclaration *funcalias, int hasOverloads)
     : FuncDeclaration(funcalias->loc, funcalias->endloc, funcalias->ident,
         funcalias->storage_class, funcalias->type)
 {
     assert(funcalias != this);
     this->funcalias = funcalias;
+
+    this->hasOverloads = hasOverloads;
+    if (hasOverloads)
+    {
+        if (FuncAliasDeclaration *fad = funcalias->isFuncAliasDeclaration())
+            this->hasOverloads = fad->hasOverloads;
+    }
+    else
+    {   // for internal use
+        assert(!funcalias->isFuncAliasDeclaration());
+        this->hasOverloads = 0;
+    }
 }
 
 const char *FuncAliasDeclaration::kind()
 {
     return "function alias";
+}
+
+FuncDeclaration *FuncAliasDeclaration::toAliasFunc()
+{
+    return funcalias->toAliasFunc();
 }
 
 

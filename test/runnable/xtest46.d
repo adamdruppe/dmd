@@ -697,6 +697,17 @@ void test36()
 
 /***************************************************/
 
+void test6685()
+{
+    struct S { int x; };
+    with({ return S(); }())
+    {
+        x++;
+    }
+}
+
+/***************************************************/
+
 struct A37(alias T)
 {
 }
@@ -1109,6 +1120,17 @@ void test62()
 
 /***************************************************/
 
+void test3927()
+{
+    int[] array;
+    assert(array.length++ == 0);
+    assert(array.length == 1);
+    assert(array.length-- == 1);
+    assert(array.length == 0);
+}
+
+/***************************************************/
+
 void test63()
 {
     int[3] b;
@@ -1360,7 +1382,9 @@ void test73()
     static assert(!is(Bari!(const(T))));
     static assert(!is(Bari!(shared(T))));
     static assert(!is(Bari!(const(shared(T)))));
-    static assert(!is(Barc!(shared(T))));
+
+    static assert(is(Barc!(shared(T))));
+
     static assert(!is(Bars!(T)));
     static assert(!is(Bars!(const(T))));
     static assert(!is(Bars!(immutable(T))));
@@ -1714,6 +1738,27 @@ void test90( )
 {   S90 s;
     s.opDispatch!("foo")( 3.14 );
     s.foo( 3.14 );
+}
+
+/***************************************************/
+
+struct A7439(int r, int c)
+{
+    alias r R;
+    alias c C;
+    alias float[R * C] Data;
+    Data _data;
+    alias _data this;
+
+    this(Data ar){ _data = ar; }
+
+    pure ref float opIndex(size_t rr, size_t cc){ return _data[cc + rr * C]; }
+}
+
+void test7439()
+{
+    A7439!(2, 2) a = A7439!(2, 2)([8, 3, 2, 9]);
+    a[0,0] -= a[0,0] * 2.0;
 }
 
 /***************************************************/
@@ -2514,6 +2559,19 @@ struct S131
 }
 
 /***************************************************/
+
+struct S7545
+{
+    uint id;
+    alias id this;
+}
+
+void test7545()
+{
+    auto id = 0 ? S7545() : -1;
+}
+
+/***************************************************/
 // 5020
 
 void test132()
@@ -2722,6 +2780,21 @@ void test138()
 {
     assert(bar138.width == 2);
     assert(bar138.height == 5);
+}
+
+/***************************************************/
+
+void test3822()
+{
+    import core.stdc.stdlib;
+    int i = 0;
+    void* ptr;
+    while(i++ != 2)
+    {
+        auto p = alloca(2);
+        assert(p != ptr);
+        ptr = p;
+    }
 }
 
 /***************************************************/
@@ -2946,6 +3019,82 @@ void test147()
     xc.f();     // prints "X.f const"
     xc.g();     // prints "X.g const"
     xc += 10;   // should print "X+= const" (2)
+}
+
+
+/***************************************************/
+
+void test3559()
+{
+    static class A
+    {
+        int foo(int a)   { return 0; }
+        int foo(float a) { return 1; }
+
+        int bar(float a) { return 1; }
+        int bar(int a) { return 0; }
+    }
+
+    static class B : A
+    {
+        int foo(float a) { return 2; }
+        alias A.foo foo;
+
+        alias A.bar bar;
+        int bar(float a) { return 2; }
+    }
+
+    {
+        auto x = new A;
+        auto f1 = cast(int delegate(int))&x.foo;
+        auto f2 = cast(int delegate(float))&x.foo;
+        int delegate(int) f3 = &x.foo;
+        int delegate(float) f4 = &x.foo;
+
+        assert(f1(0) == 0);
+        assert(f2(0) == 1);
+        assert(f3(0) == 0);
+        assert(f4(0) == 1);
+    }
+
+    {
+        auto x = new B;
+        auto f1 = cast(int delegate(int))&x.foo;
+        auto f2 = cast(int delegate(float))&x.foo;
+        int delegate(int) f3 = &x.foo;
+        int delegate(float) f4 = &x.foo;
+
+        assert(f1(0) == 0);
+        assert(f2(0) == 2);
+        assert(f3(0) == 0);
+        assert(f4(0) == 2);
+    }
+
+    {
+        auto x = new A;
+        auto f1 = cast(int delegate(int))&x.bar;
+        auto f2 = cast(int delegate(float))&x.bar;
+        int delegate(int) f3 = &x.bar;
+        int delegate(float) f4 = &x.bar;
+
+        assert(f1(0) == 0);
+        assert(f2(0) == 1);
+        assert(f3(0) == 0);
+        assert(f4(0) == 1);
+    }
+
+    {
+        auto x = new B;
+        auto f1 = cast(int delegate(int))&x.bar;
+        auto f2 = cast(int delegate(float))&x.bar;
+        int delegate(int) f3 = &x.bar;
+        int delegate(float) f4 = &x.bar;
+
+        assert(f1(0) == 0);
+        assert(f2(0) == 2);
+        assert(f3(0) == 0);
+        assert(f4(0) == 2);
+    }
 }
 
 
@@ -3248,6 +3397,26 @@ ref func2521_7() {
 }
 
 /***************************************************/
+
+void test5554()
+{
+    class MA { }
+    class MB : MA { }
+    class MC : MB { }
+
+    class A { abstract MA foo(); }
+    interface I { MB foo(); }
+    class B : A
+    {
+        MC foo() { return null; }
+    }
+    class C : B, I
+    {
+        override MC foo() { return null; }
+    }
+}
+
+/***************************************************/
 // 5962
 
 struct S156
@@ -3413,6 +3582,17 @@ void test6228()
 
 /***************************************************/
 
+int test7544()
+{
+    try { throw new Exception(""); }
+    catch (Exception e) static assert(1);
+    return 1;
+}
+
+static assert(test7544());
+
+/***************************************************/
+
 struct S6230 {
     int p;
     int q() const pure {
@@ -3530,6 +3710,18 @@ void test6295() {
     }
     S6295!4 x;
     assert(bar(x) == 4);
+}
+
+/***************************************************/
+
+template TT4536(T...) { alias T TT4536; }
+
+void test4536()
+{
+    auto x = TT4536!(int, long, [1, 2]).init;
+    assert(x[0] is int.init);
+    assert(x[1] is long.init);
+    assert(x[2] is [1, 2].init);
 }
 
 /***************************************************/
@@ -4478,6 +4670,69 @@ class B158 : A158
 
 
 /***************************************************/
+// 7562
+
+static struct MyInt
+{
+    private int value;
+    mixin ProxyOf!value;
+}
+mixin template ProxyOf(alias a)
+{
+    template X1(){}
+    template X2(){}
+    template X3(){}
+    template X4(){}
+    template X5(){}
+    template X6(){}
+    template X7(){}
+    template X8(){}
+    template X9(){}
+    template X10(){}
+
+    void test1(this X)(){}
+    void test2(this Y)(){}
+}
+
+/***************************************************/
+// 7583
+
+template Tup7583(E...) { alias E Tup7583; }
+
+struct S7583
+{
+    Tup7583!(float, char) field;
+    alias field this;
+    this(int x) {    }
+}
+
+int bug7583() {
+    S7583[] arr;
+    arr ~= S7583(0);
+    return 1;
+}
+
+static assert (bug7583());
+
+/***************************************************/
+// 7618
+
+void test7618(const int x = 1)
+{
+    int func(ref int x) { return 1; }
+    static assert(!__traits(compiles, func(x)));
+    // Error: function test.foo.func (ref int _param_0) is not callable using argument types (const(int))
+
+    int delegate(ref int) dg = (ref int x) => 1;
+    static assert(!__traits(compiles, dg(x)));
+    // --> no error, bad!
+
+    int function(ref int) fp = (ref int x) => 1;
+    static assert(!__traits(compiles, fp(x)));
+    // --> no error, bad!
+}
+
+/***************************************************/
 
 int main()
 {
@@ -4566,15 +4821,19 @@ int main()
     test81();
     test82();
     test83();
+    test3559();
     test84();
     test85();
     test86();
     test87();
+    test5554();
     test88();
+    test7545();
     test89();
     test90();
     test91();
     test92();
+    test4536();
     test93();
     test94();
     test95();
@@ -4588,7 +4847,7 @@ int main()
     test103();
     test104();
     test105();
-
+    test3927();
     test107();
 
     test109();
@@ -4600,6 +4859,7 @@ int main()
     test115();
     test116();
     test117();
+    test3822();
     test118();
     test5081();
 
@@ -4636,6 +4896,7 @@ int main()
     test145();
     test146();
     test147();
+    test6685();
     test148();
     test149();
     test2540();
@@ -4691,6 +4952,7 @@ int main()
     test7196();
     test7285();
     test7321();
+    test7618();
 
     printf("Success\n");
     return 0;

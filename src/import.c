@@ -1,6 +1,6 @@
 
 // Compiler implementation of the D programming language
-// Copyright (c) 1999-2009 by Digital Mars
+// Copyright (c) 1999-2012 by Digital Mars
 // All Rights Reserved
 // written by Walter Bright
 // http://www.digitalmars.com
@@ -92,10 +92,13 @@ void Import::load(Scope *sc)
     {
         // Load module
         mod = Module::load(loc, packages, id);
-        dst->insert(id, mod);           // id may be different from mod->ident,
-                                        // if so then insert alias
-        if (!mod->importedFrom)
-            mod->importedFrom = sc ? sc->module->importedFrom : Module::rootModule;
+        if (mod)
+        {
+            dst->insert(id, mod);           // id may be different from mod->ident,
+                                            // if so then insert alias
+            if (!mod->importedFrom)
+                mod->importedFrom = sc ? sc->module->importedFrom : Module::rootModule;
+        }
     }
     if (!pkg)
         pkg = mod;
@@ -146,7 +149,8 @@ void Import::semantic(Scope *sc)
     // Load if not already done so
     if (!mod)
     {   load(sc);
-        mod->importAll(0);
+        if (mod)
+            mod->importAll(0);
     }
 
     if (mod)
@@ -186,15 +190,35 @@ void Import::semantic(Scope *sc)
             sc->module->needmoduleinfo = 1;
         }
 
-        if (aliasId)
-        {
-            AliasDeclaration *ad = new AliasDeclaration(loc, aliasId, mod);
-            sc->insert(ad);
-            ad->semantic(sc);
+        sc = sc->push(mod);
+        /* BUG: Protection checks can't be enabled yet. The issue is
+         * that Dsymbol::search errors before overload resolution.
+         */
+#if 0
+        sc->protection = protection;
+#else
+        sc->protection = PROTpublic;
+#endif
+        for (size_t i = 0; i < aliasdecls.dim; i++)
+        {   Dsymbol *s = aliasdecls[i];
+
+            //printf("\tImport alias semantic('%s')\n", s->toChars());
+            if (mod->search(loc, names[i], 0))
+                s->semantic(sc);
+            else
+            {
+                s = mod->search_correct(names[i]);
+                if (s)
+                    mod->error(loc, "import '%s' not found, did you mean '%s %s'?", names[i]->toChars(), s->kind(), s->toChars());
+                else
+                    mod->error(loc, "import '%s' not found", names[i]->toChars());
+            }
         }
     }
 
-    if (global.params.moduleDeps != NULL)
+    if (global.params.moduleDeps != NULL &&
+        // object self-imports itself, so skip that (Bugzilla 7547)
+        !(id == Id::object && sc->module->ident == Id::object))
     {
         /* The grammar of the file is:
          *      ImportDeclaration
@@ -328,7 +352,21 @@ Dsymbol *Import::search(Loc loc, Identifier *ident, int flags)
             return pkg;
         }
     }
-    return 0;
+    // Forward it to the package/module
+    return pkg->search(loc, ident, flags);
+}
+
+int Import::overloadInsert(Dsymbol *s)
+{
+    /* Allow multiple imports with the same package base, but disallow
+     * alias collisions (Bugzilla 5412).
+     */
+    assert(ident && ident == s->ident);
+    Import *imp;
+    if (!aliasId && (imp = s->isImport()) != NULL && !imp->aliasId)
+        return TRUE;
+    else
+        return FALSE;
 }
 
 void Import::toCBuffer(OutBuffer *buf, HdrGenState *hgs)

@@ -1,6 +1,6 @@
 
 // Compiler implementation of the D programming language
-// Copyright (c) 1999-2011 by Digital Mars
+// Copyright (c) 1999-2012 by Digital Mars
 // All Rights Reserved
 // written by Walter Bright
 // http://www.digitalmars.com
@@ -120,6 +120,7 @@ struct Dsymbol : Object
     unsigned char *comment;     // documentation comment for this Dsymbol
     Loc loc;                    // where defined
     Scope *scope;               // !=NULL means context to use for semantic()
+    bool errors;                // this symbol failed to pass semantic()
 
     Dsymbol();
     Dsymbol(Identifier *);
@@ -137,6 +138,7 @@ struct Dsymbol : Object
     Dsymbol *toParent();
     Dsymbol *toParent2();
     TemplateInstance *inTemplateInstance();
+    TemplateInstance *isSpeculative();
 
     int dyncast() { return DYNCAST_DSYMBOL; }   // kludge for template.isSymbol()
 
@@ -174,6 +176,7 @@ struct Dsymbol : Object
     virtual int isDeprecated();                 // is Dsymbol deprecated?
 #if DMDV2
     virtual int isOverloadable();
+    virtual int hasOverloads();
 #endif
     virtual LabelDsymbol *isLabel();            // is this a LabelDsymbol?
     virtual AggregateDeclaration *isMember();   // is this symbol a member of an AggregateDeclaration?

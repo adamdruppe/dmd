@@ -81,6 +81,10 @@ int REALALIGNSIZE = 4;
 int REALSIZE = 10;
 int REALPAD = 0;
 int REALALIGNSIZE = 2;
+#elif IN_GCC
+int REALSIZE = 0;
+int REALPAD = 0;
+int REALALIGNSIZE = 0;
 #else
 #error "fix this"
 #endif
@@ -247,7 +251,7 @@ void Type::init()
 
     for (size_t i = 0; i < TMAX; i++)
     {   if (!mangleChar[i])
-            fprintf(stdmsg, "ty = %zd\n", i);
+            fprintf(stdmsg, "ty = %llu\n", (ulonglong)i);
         assert(mangleChar[i]);
     }
 
@@ -1290,6 +1294,32 @@ Type *Type::aliasthisOf()
             Type *t = ed->type;
             return t;
         }
+        TemplateDeclaration *td = ad->aliasthis->isTemplateDeclaration();
+        if (td)
+        {   assert(td->scope);
+            Expression *ethis = defaultInit(0);
+            FuncDeclaration *fd = td->deduceFunctionTemplate(td->scope, 0, NULL, ethis, NULL, 1);
+            if (fd)
+            {
+                //if (!fd->type->nextOf() && fd->inferRetType)
+                {
+                    TemplateInstance *spec = fd->isSpeculative();
+                    int olderrs = global.errors;
+                    fd->semantic3(fd->scope);
+                    // Update the template instantiation with the number
+                    // of errors which occured.
+                    if (spec && global.errors != olderrs)
+                        spec->errors = global.errors - olderrs;
+                }
+                if (!global.errors)
+                {
+                    Type *t = fd->type->nextOf();
+                    t = t->substWildTo(mod == 0 ? MODmutable : mod);
+                    return t;
+                }
+            }
+            return Type::terror;
+        }
         //printf("%s\n", ad->aliasthis->kind());
     }
     return NULL;
@@ -1978,35 +2008,6 @@ Expression *Type::dotExp(Scope *sc, Expression *e, Identifier *ident)
         }
         else if (ident == Id::init)
         {
-#if 0
-            if (v->init)
-            {
-                if (v->init->isVoidInitializer())
-                    error(e->loc, "%s.init is void", v->toChars());
-                else
-                {   Loc loc = e->loc;
-                    e = v->init->toExpression();
-                    if (e->op == TOKassign || e->op == TOKconstruct || e->op == TOKblit)
-                    {
-                        e = ((AssignExp *)e)->e2;
-
-                        /* Take care of case where we used a 0
-                         * to initialize the struct.
-                         */
-                        if (e->type == Type::tint32 &&
-                            e->isBool(0) &&
-                            v->type->toBasetype()->ty == Tstruct)
-                        {
-                            e = v->type->defaultInit(e->loc);
-                        }
-                    }
-                    e = e->optimize(WANTvalue | WANTinterpret);
-//                  if (!e->isConst())
-//                      error(loc, ".init cannot be evaluated at compile time");
-                }
-                goto Lreturn;
-            }
-#endif
             e = defaultInitLiteral(e->loc);
             goto Lreturn;
         }
@@ -2093,7 +2094,7 @@ Expression *Type::noMember(Scope *sc, Expression *e, Identifier *ident)
         {   /* Rewrite e.ident as:
              *  e.aliasthis.ident
              */
-            e = new DotIdExp(e->loc, e, sym->aliasthis->ident);
+            e = resolveAliasThis(sc, e);
             e = new DotIdExp(e->loc, e, ident);
             return e->semantic(sc);
         }
@@ -3037,7 +3038,7 @@ Expression *TypeBasic::dotExp(Scope *sc, Expression *e, Identifier *ident)
             case Timaginary64:  t = tfloat64;           goto L2;
             case Timaginary80:  t = tfloat80;           goto L2;
             L2:
-                e = new RealExp(0, 0.0, t);
+                e = new RealExp(0, ldouble(0.0), t);
                 break;
 
             default:
@@ -3069,7 +3070,7 @@ Expression *TypeBasic::dotExp(Scope *sc, Expression *e, Identifier *ident)
             case Tfloat32:
             case Tfloat64:
             case Tfloat80:
-                e = new RealExp(0, 0.0, this);
+                e = new RealExp(0, ldouble(0.0), this);
                 break;
 
             default:
@@ -3096,7 +3097,7 @@ Expression *TypeBasic::defaultInit(Loc loc)
      */
     union
     {   unsigned short us[8];
-        long double    ld;
+        longdouble     ld;
     } snan = {{ 0, 0, 0, 0xA000, 0x7FFF }};
     /*
      * Although long doubles are 10 bytes long, some
@@ -3324,11 +3325,25 @@ Type *TypeVector::semantic(Loc loc, Scope *sc)
     if (errors != global.errors)
         return terror;
     basetype = basetype->toBasetype()->mutableOf();
-    if (basetype->ty != Tsarray || basetype->size() != 16)
-    {   error(loc, "base type of __vector must be a 16 byte static array, not %s", basetype->toChars());
+    if (basetype->ty != Tsarray)
+    {   error(loc, "T in __vector(T) must be a static array, not %s", basetype->toChars());
         return terror;
     }
     TypeSArray *t = (TypeSArray *)basetype;
+
+    if (sc && sc->parameterSpecialization && t->dim->op == TOKvar &&
+        ((VarExp *)t->dim)->var->storage_class & STCtemplateparameter)
+    {
+        /* It could be a template parameter N which has no value yet:
+         *   template Foo(T : __vector(T[N]), size_t N);
+         */
+        return this;
+    }
+
+    if (t->size(loc) != 16)
+    {   error(loc, "base type of __vector must be a 16 byte static array, not %s", t->toChars());
+        return terror;
+    }
     TypeBasic *tb = t->nextOf()->isTypeBasic();
     if (!tb || !(tb->flags & TFLAGSvector))
     {   error(loc, "base type of __vector must be a static array of an arithmetic type, not %s", t->toChars());
@@ -3601,7 +3616,7 @@ d_uns64 TypeSArray::size(Loc loc)
     return sz;
 
 Loverflow:
-    error(loc, "index %jd overflow for static array", sz);
+    error(loc, "index %lld overflow for static array", sz);
     return 1;
 }
 
@@ -3668,7 +3683,7 @@ void TypeSArray::resolve(Loc loc, Scope *sc, Expression **pe, Type **pt, Dsymbol
             sc = sc->pop();
 
             if (d >= td->objects->dim)
-            {   error(loc, "tuple index %ju exceeds length %u", d, td->objects->dim);
+            {   error(loc, "tuple index %llu exceeds length %u", d, td->objects->dim);
                 goto Ldefault;
             }
             Object *o = td->objects->tdata()[(size_t)d];
@@ -3728,7 +3743,7 @@ Type *TypeSArray::semantic(Loc loc, Scope *sc)
         uinteger_t d = dim->toUInteger();
 
         if (d >= sd->objects->dim)
-        {   error(loc, "tuple index %ju exceeds %u", d, sd->objects->dim);
+        {   error(loc, "tuple index %llu exceeds %u", d, sd->objects->dim);
             return Type::terror;
         }
         Object *o = sd->objects->tdata()[(size_t)d];
@@ -3795,7 +3810,7 @@ Type *TypeSArray::semantic(Loc loc, Scope *sc)
             if (n && n2 / n != d2)
             {
               Loverflow:
-                error(loc, "index %jd overflow for static array", d1);
+                error(loc, "index %lld overflow for static array", d1);
                 goto Lerror;
             }
         }
@@ -3809,7 +3824,7 @@ Type *TypeSArray::semantic(Loc loc, Scope *sc)
             uinteger_t d = dim->toUInteger();
 
             if (d >= tt->arguments->dim)
-            {   error(loc, "tuple index %ju exceeds %u", d, tt->arguments->dim);
+            {   error(loc, "tuple index %llu exceeds %u", d, tt->arguments->dim);
                 goto Lerror;
             }
             Parameter *arg = tt->arguments->tdata()[(size_t)d];
@@ -3850,7 +3865,7 @@ void TypeSArray::toDecoBuffer(OutBuffer *buf, int flag)
 {
     Type::toDecoBuffer(buf, flag);
     if (dim)
-        buf->printf("%ju", dim->toInteger());
+        buf->printf("%llu", dim->toInteger());
     if (next)
         /* Note that static arrays are value types, so
          * for a parameter, propagate the 0x100 to the next
@@ -4514,8 +4529,12 @@ Expression *TypeAArray::dotExp(Scope *sc, Expression *e, Identifier *ident)
         ident != Id::stringof &&
         ident != Id::offsetof)
     {
-        e->type = getImpl()->type;
-        e = e->type->dotExp(sc, e, ident);
+//printf("test1: %s, %s\n", e->toChars(), e->type->toChars());
+        Type *t = getImpl()->type;
+//printf("test2: %s, %s\n", e->toChars(), e->type->toChars());
+        e->type = t;
+        e = t->dotExp(sc, e, ident);
+//printf("test3: %s, %s\n", e->toChars(), e->type->toChars());
     }
     else
         e = Type::dotExp(sc, e, ident);
@@ -4660,7 +4679,8 @@ Type *TypePointer::semantic(Loc loc, Scope *sc)
         deco = NULL;
     }
     next = n;
-    transitive();
+    if (next->ty != Tfunction)
+        transitive();
     return merge();
 }
 
@@ -4865,6 +4885,7 @@ TypeFunction::TypeFunction(Parameters *parameters, Type *treturn, int varargs, e
     this->purity = PUREimpure;
     this->isproperty = false;
     this->isref = false;
+    this->iswild = false;
     this->fargs = NULL;
 
     if (stc & STCpure)
@@ -5330,13 +5351,15 @@ Type *TypeFunction::semantic(Loc loc, Scope *sc)
 
     /* If the parent is @safe, then this function defaults to safe
      * too.
+     * If the parent's @safe-ty is inferred, then this function's @safe-ty needs
+     * to be inferred first.
      */
     if (tf->trust == TRUSTdefault)
         for (Dsymbol *p = sc->func; p; p = p->toParent2())
         {   FuncDeclaration *fd = p->isFuncDeclaration();
             if (fd)
             {
-                if (fd->isSafe())
+                if (fd->isSafeBypassingInference())
                     tf->trust = TRUSTsafe;              // default to @safe
                 break;
             }
@@ -5373,7 +5396,6 @@ Type *TypeFunction::semantic(Loc loc, Scope *sc)
     }
 
     bool wildparams = FALSE;
-    bool wildsubparams = FALSE;
     if (tf->parameters)
     {
         /* Create a scope for evaluating the default arguments for the parameters
@@ -5415,17 +5437,27 @@ Type *TypeFunction::semantic(Loc loc, Scope *sc)
                 !(t->ty == Tpointer && t->nextOf()->ty == Tfunction || t->ty == Tdelegate))
             {
                 wildparams = TRUE;
-                if (tf->next && !wildreturn)
-                    error(loc, "inout on parameter means inout must be on return type as well (if from D1 code, replace with 'ref')");
+                //if (tf->next && !wildreturn)
+                //    error(loc, "inout on parameter means inout must be on return type as well (if from D1 code, replace with 'ref')");
             }
-            else if (!wildsubparams && t->hasWild())
-                wildsubparams = TRUE;
 
             if (fparam->defaultArg)
-            {
-                fparam->defaultArg = fparam->defaultArg->semantic(argsc);
-                fparam->defaultArg = resolveProperties(argsc, fparam->defaultArg);
-                fparam->defaultArg = fparam->defaultArg->implicitCastTo(argsc, fparam->type);
+            {   Expression *e = fparam->defaultArg;
+                e = e->semantic(argsc);
+                e = resolveProperties(argsc, e);
+                if (e->op == TOKfunction)               // see Bugzilla 4820
+                {   FuncExp *fe = (FuncExp *)e;
+                    if (fe->fd)
+                    {   // Replace function literal with a function symbol,
+                        // since default arg expression must be copied when used
+                        // and copying the literal itself is wrong.
+                        e = new VarExp(e->loc, fe->fd, 0);
+                        e = new AddrExp(e->loc, e);
+                        e = e->semantic(argsc);
+                    }
+                }
+                e = e->implicitCastTo(argsc, fparam->type);
+                fparam->defaultArg = e;
             }
 
             /* If fparam after semantic() turns out to be a tuple, the number of parameters may
@@ -5486,8 +5518,7 @@ Type *TypeFunction::semantic(Loc loc, Scope *sc)
 
     if (wildreturn && !wildparams)
         error(loc, "inout on return means inout must be on a parameter as well for %s", toChars());
-    if (wildsubparams && wildparams)
-        error(loc, "inout must be all or none on top level for %s", toChars());
+    tf->iswild = wildparams;
 
     if (tf->next)
         tf->deco = tf->merge()->deco;
@@ -6202,7 +6233,19 @@ void TypeQualified::resolveHelper(Loc loc, Scope *sc,
                 else
                 {
                   Lerror:
-                    error(loc, "identifier '%s' of '%s' is not defined", id->toChars(), toChars());
+                    if (id->dyncast() == DYNCAST_DSYMBOL)
+                    {   // searchX already handles errors for template instances
+                        assert(global.errors);
+                    }
+                    else
+                    {
+                        sm = s->search_correct(id);
+                        if (sm)
+                            error(loc, "identifier '%s' of '%s' is not defined, did you mean '%s %s'?",
+                                  id->toChars(), toChars(), sm->kind(), sm->toChars());
+                        else
+                            error(loc, "identifier '%s' of '%s' is not defined", id->toChars(), toChars());
+                    }
                     *pe = new ErrorExp();
                 }
                 return;
@@ -6693,8 +6736,14 @@ Type *TypeTypeof::semantic(Loc loc, Scope *sc)
     {
         Scope *sc2 = sc->push();
         sc2->intypeof++;
+        sc2->speculative = true;
         sc2->flags |= sc->flags & SCOPEstaticif;
+        unsigned oldspecgag = global.speculativeGag;
+        if (global.gag)
+            global.speculativeGag = global.gag;
         exp = exp->semantic(sc2);
+        global.speculativeGag = oldspecgag;
+
 #if DMDV2
         if (exp->type && exp->type->ty == Tfunction &&
             ((TypeFunction *)exp->type)->isproperty)
@@ -7709,10 +7758,17 @@ Expression *TypeStruct::defaultInitLiteral(Loc loc)
                 e = vd->init->toExpression();
         }
         else
-            e = vd->type->defaultInitLiteral();
-        structelems->tdata()[j] = e;
+            e = vd->type->defaultInitLiteral(loc);
+        (*structelems)[j] = e;
     }
     StructLiteralExp *structinit = new StructLiteralExp(loc, (StructDeclaration *)sym, structelems);
+
+    /* Copy from the initializer symbol for larger symbols,
+     * otherwise the literals expressed as code get excessively large.
+     */
+    if (size(loc) > PTRSIZE * 4)
+        structinit->sinit = sym->toInitializer();
+
     // Why doesn't the StructLiteralExp constructor do this, when
     // sym->type != NULL ?
     structinit->type = sym->type;
@@ -8246,7 +8302,7 @@ L1:
         return e;
     }
 
-    DotVarExp *de = new DotVarExp(e->loc, e, d);
+    DotVarExp *de = new DotVarExp(e->loc, e, d, d->hasOverloads());
     return de->semantic(sc);
 }
 
@@ -8540,12 +8596,32 @@ Expression *TypeTuple::getProperty(Loc loc, Identifier *ident)
     {
         e = new IntegerExp(loc, arguments->dim, Type::tsize_t);
     }
+    else if (ident == Id::init)
+    {
+        e = defaultInitLiteral(loc);
+    }
     else
     {
         error(loc, "no property '%s' for tuple '%s'", ident->toChars(), toChars());
         e = new ErrorExp();
     }
     return e;
+}
+
+Expression *TypeTuple::defaultInit(Loc loc)
+{
+    Expressions *exps = new Expressions();
+    exps->setDim(arguments->dim);
+    for (size_t i = 0; i < arguments->dim; i++)
+    {
+        Parameter *p = (*arguments)[i];
+        assert(p->type);
+        Expression *e = p->type->defaultInitLiteral(loc);
+        if (e->op == TOKerror)
+            return e;
+        (*exps)[i] = e;
+    }
+    return new TupleExp(loc, exps);
 }
 
 /***************************** TypeSlice *****************************/
@@ -8590,7 +8666,7 @@ Type *TypeSlice::semantic(Loc loc, Scope *sc)
     uinteger_t i2 = upr->toUInteger();
 
     if (!(i1 <= i2 && i2 <= tt->arguments->dim))
-    {   error(loc, "slice [%ju..%ju] is out of range of [0..%u]", i1, i2, tt->arguments->dim);
+    {   error(loc, "slice [%llu..%llu] is out of range of [0..%u]", i1, i2, tt->arguments->dim);
         return Type::terror;
     }
 
@@ -8636,7 +8712,7 @@ void TypeSlice::resolve(Loc loc, Scope *sc, Expression **pe, Type **pt, Dsymbol 
             sc = sc->pop();
 
             if (!(i1 <= i2 && i2 <= td->objects->dim))
-            {   error(loc, "slice [%ju..%ju] is out of range of [0..%u]", i1, i2, td->objects->dim);
+            {   error(loc, "slice [%llu..%llu] is out of range of [0..%u]", i1, i2, td->objects->dim);
                 goto Ldefault;
             }
 

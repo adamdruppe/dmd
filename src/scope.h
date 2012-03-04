@@ -62,6 +62,7 @@ struct Scope
     int nofree;                 // set if shouldn't free it
     int noctor;                 // set if constructor calls aren't allowed
     int intypeof;               // in typeof(exp)
+    bool speculative;            // in __traits(compiles) or typeof(exp)
     int parameterSpecialization; // if in template parameter specialization
     int noaccesscheck;          // don't do access checks
     int mustsemantic;           // cannot defer semantic()
@@ -91,6 +92,10 @@ struct Scope
 #define SCOPEdebug      0x10    // inside debug conditional
 
     AnonymousAggregateDeclaration *anonAgg;     // for temporary analysis
+
+#if IN_GCC
+    Expressions *attributes;    // GCC decl/type attributes
+#endif
 
     DocComment *lastdc;         // documentation comment for last symbol at this scope
     unsigned lastoffset;        // offset in docbuf of where to insert next dec

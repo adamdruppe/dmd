@@ -332,6 +332,49 @@ void test7202()
 }
 
 /***************************************************/
+// 7500
+
+void test7500()
+{
+    alias immutable bool function(int[]) Foo;
+    Foo f = a => true;
+}
+
+/***************************************************/
+// 7525
+
+void test7525()
+{
+    {
+        char[] delegate() a = { return null; };
+           int delegate() b = { return 1U; };
+          uint delegate() c = { return 1; };
+         float delegate() d = { return 1.0; };
+        double delegate() e = { return 1.0f; };
+    }
+
+    {
+        char[] delegate(int) a = (x){ return null; };
+           int delegate(int) b = (x){ return 1U; };
+          uint delegate(int) c = (x){ return 1; };
+         float delegate(int) d = (x){ return 1.0; };
+        double delegate(int) e = (x){ return 1.0f; };
+    }
+}
+
+/***************************************************/
+// 7582
+
+void test7582()
+{
+    void delegate(int) foo;
+    void delegate(int) foo2;
+    foo = (a) {
+        foo2 = (b) { };
+    };
+}
+
+/***************************************************/
 
 int main()
 {
@@ -348,6 +391,9 @@ int main()
     test6714();
     test7193();
     test7202();
+    test7500();
+    test7525();
+    test7582();
 
     printf("Success\n");
     return 0;

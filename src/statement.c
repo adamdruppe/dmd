@@ -2044,7 +2044,7 @@ Lagain:
                     default:            assert(0);
                 }
                 const char *r = (op == TOKforeach_reverse) ? "R" : "";
-                int j = sprintf(fdname, "_aApply%s%.*s%zd", r, 2, fntab[flag], dim);
+                int j = sprintf(fdname, "_aApply%s%.*s%llu", r, 2, fntab[flag], (ulonglong)dim);
                 assert(j < sizeof(fdname));
                 FuncDeclaration *fdapply = FuncDeclaration::genCfunc(Type::tindex, fdname);
 
@@ -2750,7 +2750,12 @@ Statement *PragmaStatement::semantic(Scope *sc)
                 Expression *e = (*args)[i];
 
                 e = e->semantic(sc);
-                e = e->optimize(WANTvalue | WANTinterpret);
+                if (e->op != TOKerror)
+                    e = e->optimize(WANTvalue | WANTinterpret);
+                if (e->op == TOKerror)
+                {   errorSupplemental(loc, "while evaluating pragma(msg, %s)", (*args)[i]->toChars());
+                    goto Lerror;
+                }
                 StringExp *se = e->toString();
                 if (se)
                 {
@@ -2820,7 +2825,7 @@ Statement *PragmaStatement::semantic(Scope *sc)
    }
     else
         error("unrecognized pragma(%s)", ident->toChars());
-
+Lerror:
     if (body)
     {
         body = body->semantic(sc);
@@ -3327,7 +3332,7 @@ DefaultStatement::DefaultStatement(Loc loc, Statement *s)
 {
     this->statement = s;
 #if IN_GCC
-+    cblock = NULL;
+    cblock = NULL;
 #endif
 }
 
@@ -4258,6 +4263,13 @@ Statement *WithStatement::semantic(Scope *sc)
         }
         else if (t->ty == Tstruct)
         {
+            if (!exp->isLvalue())
+            {
+                init = new ExpInitializer(loc, exp);
+                wthis = new VarDeclaration(loc, exp->type, Lexer::uniqueId("__withtmp"), init);
+                exp = new CommaExp(loc, new DeclarationExp(loc, wthis), new VarExp(loc, wthis));
+                exp = exp->semantic(sc);
+            }
             Expression *e = exp->addressOf(sc);
             init = new ExpInitializer(loc, e);
             wthis = new VarDeclaration(loc, e->type, Id::withSym, init);

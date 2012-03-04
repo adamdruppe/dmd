@@ -303,7 +303,7 @@ struct Type : Object
     Expression *noMember(Scope *sc, Expression *e, Identifier *ident);
     virtual unsigned memalign(unsigned salign);
     virtual Expression *defaultInit(Loc loc = 0);
-    virtual Expression *defaultInitLiteral(Loc loc = 0);
+    virtual Expression *defaultInitLiteral(Loc loc);
     virtual int isZeroInit(Loc loc = 0);                // if initializer is 0
     virtual dt_t **toDt(dt_t **pdt);
     Identifier *getTypeInfoIdent(int internal);
@@ -419,6 +419,7 @@ struct TypeVector : Type
     char *toChars();
     void toCBuffer2(OutBuffer *buf, HdrGenState *hgs, int mod);
     void toDecoBuffer(OutBuffer *buf, int flag);
+    MATCH deduceType(Scope *sc, Type *tparam, TemplateParameters *parameters, Objects *dedtypes, unsigned *wildmatch = NULL);
 #if CPP_MANGLE
     void toCppMangle(OutBuffer *buf, CppMangleState *cms);
 #endif
@@ -616,6 +617,7 @@ struct TypeFunction : TypeNext
     enum LINK linkage;  // calling convention
     enum TRUST trust;   // level of trust
     enum PURE purity;   // PURExxxx
+    bool iswild;        // is inout function
     Expressions *fargs; // function arguments
 
     int inuse;
@@ -920,6 +922,7 @@ struct TypeTuple : Type
     void toCBuffer2(OutBuffer *buf, HdrGenState *hgs, int mod);
     void toDecoBuffer(OutBuffer *buf, int flag);
     Expression *getProperty(Loc loc, Identifier *ident);
+    Expression *defaultInit(Loc loc);
     TypeInfoDeclaration *getTypeInfoDeclaration();
 };
 
@@ -985,6 +988,7 @@ struct Parameter : Object
 extern int PTRSIZE;
 extern int REALSIZE;
 extern int REALPAD;
+extern int REALALIGNSIZE;
 extern int Tsize_t;
 extern int Tptrdiff_t;
 

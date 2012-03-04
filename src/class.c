@@ -687,9 +687,14 @@ void ClassDeclaration::semantic(Scope *sc)
     /* Look for special member functions.
      * They must be in this class, not in a base class.
      */
-    ctor = (CtorDeclaration *)search(0, Id::ctor, 0);
+    ctor = search(0, Id::ctor, 0);
+#if DMDV1
     if (ctor && (ctor->toParent() != this || !ctor->isCtorDeclaration()))
         ctor = NULL;
+#else
+    if (ctor && (ctor->toParent() != this || !(ctor->isCtorDeclaration() || ctor->isTemplateDeclaration())))
+        ctor = NULL;    // search() looks through ancestor classes
+#endif
 
 //    dtor = (DtorDeclaration *)search(Id::dtor, 0);
 //    if (dtor && dtor->toParent() != this)
@@ -898,7 +903,12 @@ Dsymbol *ClassDeclaration::search(Loc loc, Identifier *ident, int flags)
     if (scope && !symtab)
     {   Scope *sc = scope;
         sc->mustsemantic++;
+        // If speculatively gagged, ungag now.
+        unsigned oldgag = global.gag;
+        if (global.isSpeculativeGagging())
+            global.gag = 0;
         semantic(sc);
+        global.gag = oldgag;
         sc->mustsemantic--;
     }
 

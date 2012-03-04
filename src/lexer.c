@@ -121,11 +121,11 @@ const char *Token::toChars()
             break;
 
         case TOKint64v:
-            sprintf(buffer,"%jdL",(intmax_t)int64value);
+            sprintf(buffer,"%lldL",(intmax_t)int64value);
             break;
 
         case TOKuns64v:
-            sprintf(buffer,"%juUL",(uintmax_t)uns64value);
+            sprintf(buffer,"%lluUL",(uintmax_t)uns64value);
             break;
 
 #if IN_GCC
@@ -143,27 +143,32 @@ const char *Token::toChars()
             break;
 #else
         case TOKfloat32v:
-            sprintf(buffer,"%Lgf", float80value);
+            ld_sprint(buffer, 'g', float80value);
+            strcat(buffer, "f");
             break;
 
         case TOKfloat64v:
-            sprintf(buffer,"%Lg", float80value);
+            ld_sprint(buffer, 'g', float80value);
             break;
 
         case TOKfloat80v:
-            sprintf(buffer,"%LgL", float80value);
+            ld_sprint(buffer, 'g', float80value);
+            strcat(buffer, "L");
             break;
 
         case TOKimaginary32v:
-            sprintf(buffer,"%Lgfi", float80value);
+            ld_sprint(buffer, 'g', float80value);
+            strcat(buffer, "fi");
             break;
 
         case TOKimaginary64v:
-            sprintf(buffer,"%Lgi", float80value);
+            ld_sprint(buffer, 'g', float80value);
+            strcat(buffer, "i");
             break;
 
         case TOKimaginary80v:
-            sprintf(buffer,"%LgLi", float80value);
+            ld_sprint(buffer, 'g', float80value);
+            strcat(buffer, "Li");
             break;
 #endif
 
@@ -1224,9 +1229,21 @@ void Lexer::scan(Token *t)
 #undef DOUBLE
 
             case '#':
+            {
                 p++;
-                pragma();
-                continue;
+                Token *n = peek(&token);
+                if (n->value == TOKidentifier && n->ident == Id::line)
+                {
+                    nextToken();
+                    poundLine();
+                    continue;
+                }
+                else
+                {
+                    t->value = TOKpound;
+                    return;
+                }
+            }
 
             default:
             {   unsigned c = *p;
@@ -2562,21 +2579,16 @@ done:
 }
 
 /*********************************************
- * Do pragma.
- * Currently, the only pragma supported is:
+ * parse:
  *      #line linnum [filespec]
  */
 
-void Lexer::pragma()
+void Lexer::poundLine()
 {
     Token tok;
     int linnum;
     char *filespec = NULL;
     Loc loc = this->loc;
-
-    scan(&tok);
-    if (tok.value != TOKidentifier || tok.ident != Id::line)
-        goto Lerr;
 
     scan(&tok);
     if (tok.value == TOKint32v || tok.value == TOKint64v)
@@ -3160,6 +3172,7 @@ void Lexer::initKeywords()
     Token::tochars[TOKpow]              = "^^";
     Token::tochars[TOKpowass]           = "^^=";
     Token::tochars[TOKgoesto]           = "=>";
+    Token::tochars[TOKpound]            = "#";
 #endif
 
      // For debugging

@@ -120,6 +120,10 @@ struct Declaration : Dsymbol
     enum LINK linkage;
     int inuse;                  // used to detect cycles
 
+#if IN_GCC
+    Expressions *attributes;    // GCC decl/type attributes
+#endif
+
     enum Semantic sem;
 
     Declaration(Identifier *id);
@@ -529,6 +533,9 @@ enum BUILTIN
     BUILTINbsr,                 // core.bitop.bsr
     BUILTINbsf,                 // core.bitop.bsf
     BUILTINbswap,               // core.bitop.bswap
+#if IN_GCC
+    BUILTINgcc,                 // GCC builtin
+#endif
 };
 
 Expression *eval_builtin(Loc loc, enum BUILTIN builtin, Expressions *arguments);
@@ -646,10 +653,12 @@ struct FuncDeclaration : Declaration
     int isAbstract();
     int isCodeseg();
     int isOverloadable();
+    int hasOverloads();
     enum PURE isPure();
     enum PURE isPureBypassingInference();
     bool setImpure();
     int isSafe();
+    bool isSafeBypassingInference();
     int isTrusted();
     bool setUnsafe();
     virtual int isNested();
@@ -687,6 +696,8 @@ struct FuncDeclaration : Declaration
     void buildClosure(IRState *irs);
 
     FuncDeclaration *isFuncDeclaration() { return this; }
+
+    virtual FuncDeclaration *toAliasFunc() { return this; }
 };
 
 #if DMDV2
@@ -700,12 +711,16 @@ FuncDeclaration *resolveFuncCall(Scope *sc, Loc loc, Dsymbol *s,
 struct FuncAliasDeclaration : FuncDeclaration
 {
     FuncDeclaration *funcalias;
+    int hasOverloads;
 
-    FuncAliasDeclaration(FuncDeclaration *funcalias);
+    FuncAliasDeclaration(FuncDeclaration *funcalias, int hasOverloads = 1);
 
     FuncAliasDeclaration *isFuncAliasDeclaration() { return this; }
     const char *kind();
     Symbol *toSymbol();
+    char *mangle() { return toAliasFunc()->mangle(); }
+
+    FuncDeclaration *toAliasFunc();
 };
 
 struct FuncLiteralDeclaration : FuncDeclaration
