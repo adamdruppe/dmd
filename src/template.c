@@ -386,7 +386,6 @@ TemplateDeclaration::TemplateDeclaration(Loc loc, Identifier *id,
     this->literal = 0;
     this->ismixin = ismixin;
     this->previous = NULL;
-    this->errors = false;
 
     // Compute in advance for Ddoc's use
     if (members)
@@ -491,7 +490,7 @@ void TemplateDeclaration::semantic(Scope *sc)
         origParameters->setDim(parameters->dim);
         for (size_t i = 0; i < parameters->dim; i++)
         {
-            TemplateParameter *tp = (*parameters)[i];
+            TemplateParameter *tp = parameters->tdata()[i];
             origParameters->tdata()[i] = tp->syntaxCopy();
         }
     }
@@ -505,13 +504,11 @@ void TemplateDeclaration::semantic(Scope *sc)
 
     for (size_t i = 0; i < parameters->dim; i++)
     {
-        TemplateParameter *tp = (*parameters)[i];
+        TemplateParameter *tp = parameters->tdata()[i];
 
         tp->semantic(paramscope);
         if (i + 1 != parameters->dim && tp->isTemplateTupleParameter())
-        {   error("template tuple parameter must be last one");
-            errors = true;
-        }
+            error("template tuple parameter must be last one");
     }
 
     paramscope->pop();
@@ -684,9 +681,6 @@ MATCH TemplateDeclaration::matchWithInstance(TemplateInstance *ti,
             ti->tiargs->tdata()[0]);
 #endif
     dedtypes->zero();
-
-    if (errors)
-        return MATCHnomatch;
 
     size_t parameters_dim = parameters->dim;
     int variadic = isVariadic() != NULL;
@@ -967,9 +961,6 @@ MATCH TemplateDeclaration::deduceFunctionTemplateMatch(Scope *sc, Loc loc, Objec
 
     dedtypes.setDim(parameters->dim);
     dedtypes.zero();
-
-    if (errors)
-        return MATCHnomatch;
 
     // Set up scope for parameters
     ScopeDsymbol *paramsym = new ScopeDsymbol();
@@ -3827,16 +3818,7 @@ void TemplateValueParameter::declareParameter(Scope *sc)
 
 void TemplateValueParameter::semantic(Scope *sc)
 {
-    bool wasSame = (sparam->type == valType);
     sparam->semantic(sc);
-    if (sparam->type == Type::terror && wasSame)
-    {   /* If sparam has a type error, avoid duplicate errors
-         * The simple solution of leaving that function if sparam->type == Type::terror
-         * doesn't quite work because it causes failures in xtest46 for bug 6295
-         */
-        valType = Type::terror;
-        return;
-    }
     valType = valType->semantic(loc, sc);
     if (!(valType->isintegral() || valType->isfloating() || valType->isString()) &&
         valType->ty != Tident)
@@ -3894,8 +3876,8 @@ Lnomatch:
 }
 
 
-MATCH TemplateValueParameter::matchArg(Scope *sc,
-        Objects *tiargs, size_t i, TemplateParameters *parameters, Objects *dedtypes,
+MATCH TemplateValueParameter::matchArg(Scope *sc, Objects *tiargs,
+        size_t i, TemplateParameters *parameters, Objects *dedtypes,
         Declaration **psparam)
 {
     //printf("TemplateValueParameter::matchArg()\n");
@@ -4290,6 +4272,18 @@ void TemplateInstance::semantic(Scope *sc)
 void TemplateInstance::semantic(Scope *sc, Expressions *fargs)
 {
     //printf("TemplateInstance::semantic('%s', this=%p, gag = %d, sc = %p)\n", toChars(), this, global.gag, sc);
+    if (global.errors && name != Id::AssociativeArray)
+    {
+        //printf("not instantiating %s due to %d errors\n", toChars(), global.errors);
+        if (!global.gag)
+        {
+            /* Trying to soldier on rarely generates useful messages
+             * at this point.
+             */
+            fatal();
+        }
+//        return;
+    }
 #if LOG
     printf("\n+TemplateInstance::semantic('%s', this=%p)\n", toChars(), this);
 #endif
@@ -4341,11 +4335,11 @@ void TemplateInstance::semantic(Scope *sc, Expressions *fargs)
             //printf("error return %p, %d\n", tempdecl, global.errors);
             return;             // error recovery
         }
-        unsigned errs = global.errors;
+
         tempdecl = findTemplateDeclaration(sc);
         if (tempdecl)
             tempdecl = findBestMatch(sc, fargs);
-        if (!tempdecl || (errs != global.errors))
+        if (!tempdecl || global.errors)
         {   inst = this;
             //printf("error return %p, %d\n", tempdecl, global.errors);
             return;             // error recovery
@@ -5288,8 +5282,7 @@ Identifier *TemplateInstance::genIdent(Objects *args)
             else
             {
 #ifdef DEBUG
-                if (!global.errors)
-                    printf("ta = %d, %s\n", ta->ty, ta->toChars());
+                printf("ta = %d, %s\n", ta->ty, ta->toChars());
 #endif
                 assert(global.errors);
             }
@@ -5322,9 +5315,8 @@ Identifier *TemplateInstance::genIdent(Objects *args)
                 continue;
             }
             // Now that we know it is not an alias, we MUST obtain a value
-            unsigned olderr = global.errors;
             ea = ea->optimize(WANTvalue | WANTinterpret);
-            if (ea->op == TOKerror || olderr != global.errors)
+            if (ea->op == TOKerror)
                 continue;
 #if 1
             /* Use deco that matches what it would be for a function parameter

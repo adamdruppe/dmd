@@ -20,6 +20,7 @@
 #include "arraytypes.h"
 #include "dsymbol.h"
 #include "lexer.h"
+#include "microd.h"
 
 struct OutBuffer;
 struct Scope;
@@ -114,6 +115,8 @@ struct Statement : Object
     virtual Statement *doInlineStatement(InlineDoState *ids);
     virtual Statement *inlineScan(InlineScanState *iss);
 
+    virtual void toMicroD(md_fptr sink);
+
     // Back end
     virtual void toIR(IRState *irs);
 
@@ -154,6 +157,7 @@ struct ExpStatement : Statement
     Statement *doInlineStatement(InlineDoState *ids);
     Statement *inlineScan(InlineScanState *iss);
 
+    void toMicroD(md_fptr sink);
     void toIR(IRState *irs);
 
     ExpStatement *isExpStatement() { return this; }
@@ -207,6 +211,8 @@ struct CompoundStatement : Statement
     Statement *doInlineStatement(InlineDoState *ids);
     Statement *inlineScan(InlineScanState *iss);
 
+    void toMicroD(md_fptr sink);
+
     void toIR(IRState *irs);
 
     CompoundStatement *isCompoundStatement() { return this; }
@@ -217,6 +223,7 @@ struct CompoundDeclarationStatement : CompoundStatement
     CompoundDeclarationStatement(Loc loc, Statements *s);
     Statement *syntaxCopy();
     void toCBuffer(OutBuffer *buf, HdrGenState *hgs);
+    void toMicroD(md_fptr sink);
 };
 
 /* The purpose of this is so that continue will go to the next
@@ -267,6 +274,8 @@ struct ScopeStatement : Statement
     Statement *doInlineStatement(InlineDoState *ids);
     Statement *inlineScan(InlineScanState *iss);
 
+    void toMicroD(md_fptr sink);
+
     void toIR(IRState *irs);
 };
 
@@ -288,6 +297,8 @@ struct WhileStatement : Statement
 
     Statement *inlineScan(InlineScanState *iss);
 
+    void toMicroD(md_fptr sink);
+
     void toIR(IRState *irs);
 };
 
@@ -308,6 +319,7 @@ struct DoStatement : Statement
     void toCBuffer(OutBuffer *buf, HdrGenState *hgs);
 
     Statement *inlineScan(InlineScanState *iss);
+    void toMicroD(md_fptr sink);
 
     void toIR(IRState *irs);
 };
@@ -335,6 +347,7 @@ struct ForStatement : Statement
     Statement *inlineScan(InlineScanState *iss);
     Statement *doInlineStatement(InlineDoState *ids);
 
+    void toMicroD(md_fptr sink);
     void toIR(IRState *irs);
 };
 
@@ -368,6 +381,8 @@ struct ForeachStatement : Statement
     void toCBuffer(OutBuffer *buf, HdrGenState *hgs);
 
     Statement *inlineScan(InlineScanState *iss);
+
+    void toMicroD(md_fptr sink);
 
     void toIR(IRState *irs);
 };
@@ -425,6 +440,7 @@ struct IfStatement : Statement
     Statement *inlineScan(InlineScanState *iss);
 
     void toIR(IRState *irs);
+    void toMicroD(md_fptr sink);
 };
 
 struct ConditionalStatement : Statement
@@ -441,6 +457,7 @@ struct ConditionalStatement : Statement
     int blockExit(bool mustNotThrow);
 
     void toCBuffer(OutBuffer *buf, HdrGenState *hgs);
+    void toMicroD(md_fptr sink);
 };
 
 struct PragmaStatement : Statement
@@ -497,6 +514,8 @@ struct SwitchStatement : Statement
     Statement *inlineScan(InlineScanState *iss);
 
     void toIR(IRState *irs);
+
+    void toMicroD(md_fptr sink);
 };
 
 struct CaseStatement : Statement
@@ -521,6 +540,7 @@ struct CaseStatement : Statement
     Statement *inlineScan(InlineScanState *iss);
 
     void toIR(IRState *irs);
+    void toMicroD(md_fptr sink);
 };
 
 #if DMDV2
@@ -559,6 +579,7 @@ struct DefaultStatement : Statement
     Statement *inlineScan(InlineScanState *iss);
 
     void toIR(IRState *irs);
+    void toMicroD(md_fptr sink);
 };
 
 struct GotoDefaultStatement : Statement
@@ -615,6 +636,7 @@ struct ReturnStatement : Statement
     Statement *doInlineStatement(InlineDoState *ids);
     Statement *inlineScan(InlineScanState *iss);
 
+    void toMicroD(md_fptr sink);
     void toIR(IRState *irs);
 
     ReturnStatement *isReturnStatement() { return this; }
@@ -632,6 +654,7 @@ struct BreakStatement : Statement
     void toCBuffer(OutBuffer *buf, HdrGenState *hgs);
 
     void toIR(IRState *irs);
+    void toMicroD(md_fptr);
 };
 
 struct ContinueStatement : Statement
@@ -646,6 +669,7 @@ struct ContinueStatement : Statement
     void toCBuffer(OutBuffer *buf, HdrGenState *hgs);
 
     void toIR(IRState *irs);
+    void toMicroD(md_fptr);
 };
 
 struct SynchronizedStatement : Statement
@@ -706,6 +730,8 @@ struct TryCatchStatement : Statement
 
     void toIR(IRState *irs);
     void toCBuffer(OutBuffer *buf, HdrGenState *hgs);
+
+    void toMicroD(md_fptr sink);
 };
 
 struct Catch : Object
@@ -722,6 +748,8 @@ struct Catch : Object
     void semantic(Scope *sc);
     int blockExit(bool mustNotThrow);
     void toCBuffer(OutBuffer *buf, HdrGenState *hgs);
+
+    void toMicroD(md_fptr sink);
 };
 
 struct TryFinallyStatement : Statement
@@ -742,6 +770,8 @@ struct TryFinallyStatement : Statement
     Statement *inlineScan(InlineScanState *iss);
 
     void toIR(IRState *irs);
+
+    void toMicroD(md_fptr sink);
 };
 
 struct OnScopeStatement : Statement
@@ -775,6 +805,8 @@ struct ThrowStatement : Statement
     Statement *inlineScan(InlineScanState *iss);
 
     void toIR(IRState *irs);
+
+    void toMicroD(md_fptr sink);
 };
 
 struct VolatileStatement : Statement
@@ -843,6 +875,8 @@ struct LabelStatement : Statement
     LabelStatement *isLabelStatement() { return this; }
 
     void toIR(IRState *irs);
+
+    void toMicroD(md_fptr sink);
 };
 
 struct LabelDsymbol : Dsymbol

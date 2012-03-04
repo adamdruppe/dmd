@@ -133,6 +133,7 @@ Msgtable msgtable[] =
     { "Windows" },
     { "Pascal" },
     { "System" },
+    { "js" },
 
     { "exit" },
     { "success" },
@@ -264,6 +265,7 @@ Msgtable msgtable[] =
     { "lib" },
     { "msg" },
     { "startaddress" },
+    { "no_js_output" },
 
     // For special functions
     { "tohash", "toHash" },

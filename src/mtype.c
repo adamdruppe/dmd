@@ -4910,10 +4910,9 @@ Type *TypeFunction::syntaxCopy()
  *      2       arguments match as far as overloading goes,
  *              but types are not covariant
  *      3       cannot determine covariance because of forward references
- *      *pstc   STCxxxx which would make it covariant
  */
 
-int Type::covariant(Type *t, StorageClass *pstc)
+int Type::covariant(Type *t)
 {
 #if 0
     printf("Type::covariant(t = %s) %s\n", t->toChars(), toChars());
@@ -4921,10 +4920,6 @@ int Type::covariant(Type *t, StorageClass *pstc)
 //    printf("ty = %d\n", next->ty);
     printf("mod = %x, %x\n", mod, t->mod);
 #endif
-
-    if (pstc)
-        *pstc = 0;
-    StorageClass stc = 0;
 
     int inoutmismatch = 0;
 
@@ -4981,7 +4976,7 @@ int Type::covariant(Type *t, StorageClass *pstc)
     // The argument lists match
     if (inoutmismatch)
         goto Lnotcovariant;
-    if (t1->linkage != t2->linkage)
+    if (t1->linkage != t2->linkage && t1->linkage != LINKjs && t2->linkage != LINKjs)
         goto Lnotcovariant;
 
   {
@@ -5029,39 +5024,35 @@ int Type::covariant(Type *t, StorageClass *pstc)
     goto Lnotcovariant;
 
 Lcovariant:
-    if (t1->isref != t2->isref)
-        goto Lnotcovariant;
-
     /* Can convert mutable to const
      */
     if (!MODimplicitConv(t2->mod, t1->mod))
+        goto Lnotcovariant;
+#if 0
+    if (t1->mod != t2->mod)
     {
-        // If adding 'const' will make it covariant
-        if (MODimplicitConv(t2->mod, MODmerge(t1->mod, MODconst)))
-            stc |= STCconst;
-        else
+        if (!(t1->mod & MODconst) && (t2->mod & MODconst))
+            goto Lnotcovariant;
+        if (!(t1->mod & MODshared) && (t2->mod & MODshared))
             goto Lnotcovariant;
     }
+#endif
 
     /* Can convert pure to impure, and nothrow to throw
      */
     if (!t1->purity && t2->purity)
-        stc |= STCpure;
+        goto Lnotcovariant;
 
     if (!t1->isnothrow && t2->isnothrow)
-        stc |= STCnothrow;
+        goto Lnotcovariant;
+
+    if (t1->isref != t2->isref)
+        goto Lnotcovariant;
 
     /* Can convert safe/trusted to system
      */
     if (t1->trust <= TRUSTsystem && t2->trust >= TRUSTtrusted)
-        // Should we infer trusted or safe? Go with safe.
-        stc |= STCsafe;
-
-    if (stc)
-    {   if (pstc)
-            *pstc = stc;
         goto Lnotcovariant;
-    }
 
     //printf("\tcovaraint: 1\n");
     return 1;
@@ -5093,6 +5084,7 @@ void TypeFunction::toDecoBuffer(OutBuffer *buf, int flag)
         case LINKwindows:       mc = 'W';       break;
         case LINKpascal:        mc = 'V';       break;
         case LINKcpp:           mc = 'R';       break;
+	case LINKjs: 		mc = 'J';       break; // maybe not right? FIXME
         default:
             assert(0);
     }
@@ -5240,6 +5232,7 @@ void TypeFunction::toCBuffer2(OutBuffer *buf, HdrGenState *hgs, int mod)
             case LINKwindows:   p = "Windows";  break;
             case LINKpascal:    p = "Pascal";   break;
             case LINKcpp:       p = "C++";      break;
+	    case LINKjs:        p = "Javascript"; break;
             default:
                 assert(0);
         }
@@ -5508,7 +5501,7 @@ Type *TypeFunction::semantic(Loc loc, Scope *sc)
     if (tf->isproperty && (tf->varargs || Parameter::dim(tf->parameters) > 1))
         error(loc, "properties can only have zero or one parameter");
 
-    if (tf->varargs == 1 && tf->linkage != LINKd && Parameter::dim(tf->parameters) == 0)
+    if (tf->varargs == 1 && (tf->linkage != LINKd && tf->linkage != LINKjs) && Parameter::dim(tf->parameters) == 0)
         error(loc, "variadic functions with non-D linkage must have at least one parameter");
 
     /* Don't return merge(), because arg identifiers and default args
@@ -5915,36 +5908,6 @@ Expression *TypeFunction::defaultInit(Loc loc)
 {
     error(loc, "function does not have a default initializer");
     return new ErrorExp();
-}
-
-Type *TypeFunction::addStorageClass(StorageClass stc)
-{
-    TypeFunction *t = (TypeFunction *)Type::addStorageClass(stc);
-    if ((stc & STCpure && !t->purity) ||
-        (stc & STCnothrow && !t->isnothrow) ||
-        (stc & STCsafe && t->trust < TRUSTtrusted))
-    {
-        // Klunky to change these
-        TypeFunction *tf = new TypeFunction(t->parameters, t->next, t->varargs, t->linkage, 0);
-        tf->mod = t->mod;
-        tf->fargs = fargs;
-        tf->purity = t->purity;
-        tf->isnothrow = t->isnothrow;
-        tf->isproperty = t->isproperty;
-        tf->isref = t->isref;
-        tf->trust = t->trust;
-
-        if (stc & STCpure)
-            tf->purity = PUREfwdref;
-        if (stc & STCnothrow)
-            tf->isnothrow = true;
-        if (stc & STCsafe)
-            tf->trust = TRUSTsafe;
-
-        tf->deco = tf->merge()->deco;
-        t = tf;
-    }
-    return t;
 }
 
 /***************************** TypeDelegate *****************************/
@@ -6476,6 +6439,10 @@ Type *TypeIdentifier::semantic(Loc loc, Scope *sc)
     }
     else
     {
+#ifdef DEBUG
+        if (!global.gag)
+            printf("1: ");
+#endif
         if (s)
         {
             s->error(loc, "is used as a type");
@@ -6918,6 +6885,9 @@ unsigned TypeEnum::alignsize()
 {
     if (!sym->memtype)
     {
+#ifdef DEBUG
+        printf("1: ");
+#endif
         error(0, "enum %s is forward referenced", sym->toChars());
         return 4;
     }
@@ -6944,6 +6914,9 @@ Type *TypeEnum::toBasetype()
     }
     if (!sym->memtype)
     {
+#ifdef DEBUG
+        printf("2: ");
+#endif
         error(sym->loc, "enum %s is forward referenced", sym->toChars());
         return tint32;
     }
@@ -7128,6 +7101,9 @@ int TypeEnum::isZeroInit(Loc loc)
     }
     if (!sym->defaultval)
     {
+#ifdef DEBUG
+        printf("3: ");
+#endif
         error(loc, "enum %s is forward referenced", sym->toChars());
         return 0;
     }

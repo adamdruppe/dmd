@@ -674,12 +674,6 @@ void FuncDeclaration::toObjFile(int multiobj)
         irs.shidden = shidden;
         this->shidden = shidden;
     }
-    else
-    {   // Register return style cannot make nrvo.
-        // Auto functions keep the nrvo_can flag up to here,
-        // so we should eliminate it before entering backend.
-        nrvo_can = 0;
-    }
 
     if (vthis)
     {
@@ -1054,6 +1048,9 @@ unsigned Type::totym()
 
         case Tident:
         case Ttypeof:
+#ifdef DEBUG
+            printf("ty = %d, '%s'\n", ty, toChars());
+#endif
             error(0, "forward reference of %s", toChars());
             t = TYint;
             break;
@@ -1150,6 +1147,9 @@ unsigned TypeFunction::totym()
         case LINKcpp:
             tyf = TYnfunc;
             break;
+	case LINKjs:
+		tyf = TYnfunc;
+	break;
 
         default:
             printf("linkage = %d\n", linkage);

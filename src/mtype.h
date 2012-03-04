@@ -20,6 +20,7 @@
 
 #include "arraytypes.h"
 #include "expression.h"
+#include "microd.h"
 
 struct Scope;
 struct Identifier;
@@ -223,7 +224,7 @@ struct Type : Object
     virtual Type *syntaxCopy();
     int equals(Object *o);
     int dyncast() { return DYNCAST_TYPE; } // kludge for template.isType()
-    int covariant(Type *t, StorageClass *pstc = NULL);
+    int covariant(Type *t);
     char *toChars();
     static char needThisPrefix();
     static void init();
@@ -238,6 +239,7 @@ struct Type : Object
     virtual void toCBuffer(OutBuffer *buf, Identifier *ident, HdrGenState *hgs);
     virtual void toCBuffer2(OutBuffer *buf, HdrGenState *hgs, int mod);
     void toCBuffer3(OutBuffer *buf, HdrGenState *hgs, int mod);
+    virtual void toMicroD(md_fptr sink);
     void modToBuffer(OutBuffer *buf);
 #if CPP_MANGLE
     virtual void toCppMangle(OutBuffer *buf, CppMangleState *cms);
@@ -275,7 +277,7 @@ struct Type : Object
     Type *addSTC(StorageClass stc);
     Type *castMod(unsigned mod);
     Type *addMod(unsigned mod);
-    virtual Type *addStorageClass(StorageClass stc);
+    Type *addStorageClass(StorageClass stc);
     Type *pointerTo();
     Type *referenceTo();
     Type *arrayOf();
@@ -397,6 +399,7 @@ struct TypeBasic : Type
     int isZeroInit(Loc loc);
     int builtinTypeInfo();
     TypeTuple *toArgTypes();
+    void toMicroD(md_fptr sink);
 
     // For eliminating dynamic_cast
     TypeBasic *isTypeBasic();
@@ -435,6 +438,7 @@ struct TypeVector : Type
 struct TypeArray : TypeNext
 {
     TypeArray(TY ty, Type *next);
+    virtual void toMicroD(md_fptr sink);
     Expression *dotExp(Scope *sc, Expression *e, Identifier *ident);
 };
 
@@ -633,7 +637,6 @@ struct TypeFunction : TypeNext
     void toCppMangle(OutBuffer *buf, CppMangleState *cms);
 #endif
     bool parameterEscapes(Parameter *p);
-    Type *addStorageClass(StorageClass stc);
 
     int callMatch(Expression *ethis, Expressions *toargs, int flag = 0);
     type *toCtype();
@@ -773,6 +776,7 @@ struct TypeStruct : Type
     void toCppMangle(OutBuffer *buf, CppMangleState *cms);
 #endif
 
+    void toMicroD(md_fptr sink);
     type *toCtype();
 };
 
@@ -972,6 +976,7 @@ struct Parameter : Object
     static int isTPL(Parameters *arguments);
     static size_t dim(Parameters *arguments);
     static Parameter *getNth(Parameters *arguments, size_t nth, size_t *pn = NULL);
+    void toMicroD(md_fptr sink);
 
     typedef int (*ForeachDg)(void *ctx, size_t paramidx, Parameter *param);
     static int foreach(Parameters *args, ForeachDg dg, void *ctx, size_t *pn=NULL);

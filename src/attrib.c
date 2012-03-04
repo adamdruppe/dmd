@@ -1,4 +1,3 @@
-
 // Compiler implementation of the D programming language
 // Copyright (c) 1999-2011 by Digital Mars
 // All Rights Reserved
@@ -1103,6 +1102,12 @@ void PragmaDeclaration::semantic(Scope *sc)
             printf("\n");
         }
         goto Lnodecl;
+    }
+    else if(ident == Id::no_js_output) {
+    	if(decl)
+    	for(size_t i = 0; i < decl->dim; i++) {
+		decl->tdata()[i]->suppress_js_output = 1;
+	}
     }
     else
         error("unrecognized pragma(%s)", ident->toChars());

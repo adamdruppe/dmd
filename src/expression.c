@@ -1355,6 +1355,9 @@ void Expression::toCBuffer(OutBuffer *buf, HdrGenState *hgs)
 void Expression::toMangleBuffer(OutBuffer *buf)
 {
     error("expression %s is not a valid template value argument", toChars());
+#ifdef DEBUG
+dump(0);
+#endif
 }
 
 /***************************************
@@ -1544,7 +1547,7 @@ void Expression::checkPurity(Scope *sc, VarDeclaration *v, Expression *ethis)
                     break;
                 if (ff->setImpure() && !msg)
                 {   error("pure function '%s' cannot access mutable static data '%s'",
-                        sc->func->toPrettyChars(), v->toChars());
+                        sc->func->toChars(), v->toChars());
                     msg = TRUE;                     // only need the innermost message
                 }
             }
@@ -1616,7 +1619,6 @@ Expression *Expression::checkToBoolean(Scope *sc)
 #ifdef DEBUG
     if (!type)
         dump(0);
-    assert(type);
 #endif
 
     // Structs can be converted to bool using opCast(bool)()
@@ -2631,8 +2633,6 @@ DsymbolExp::DsymbolExp(Loc loc, Dsymbol *s, int hasOverloads)
     this->hasOverloads = hasOverloads;
 }
 
-AggregateDeclaration *isAggregate(Type *t);
-
 Expression *DsymbolExp::semantic(Scope *sc)
 {
 #if LOGSEMANTIC
@@ -2834,12 +2834,8 @@ Lagain:
     if (td)
     {
         Dsymbol *p = td->toParent2();
-        FuncDeclaration *fdthis = hasThis(sc);
-        AggregateDeclaration *ad = p ? p->isAggregateDeclaration() : NULL;
-        if (fdthis && ad && isAggregate(fdthis->vthis->type) == ad)
-        {
+        if (hasThis(sc) && p && p->isAggregateDeclaration())
             e = new DotTemplateExp(loc, new ThisExp(loc), td);
-        }
         else
             e = new TemplateExp(loc, td);
         e = e->semantic(sc);
@@ -5932,18 +5928,9 @@ Expression *BinExp::incompatibleTypes()
     if (e1->type->toBasetype() != Type::terror &&
         e2->type->toBasetype() != Type::terror
        )
-    {
-        if (e1->op == TOKtype || e2->op == TOKtype)
-        {
-            error("incompatible types for ((%s) %s (%s)): cannot use '%s' with types",
-                e1->toChars(), Token::toChars(op), e2->toChars(), Token::toChars(op));
-        }
-        else
-        {
-            error("incompatible types for ((%s) %s (%s)): '%s' and '%s'",
+    {   error("incompatible types for ((%s) %s (%s)): '%s' and '%s'",
              e1->toChars(), Token::toChars(op), e2->toChars(),
              e1->type->toChars(), e2->type->toChars());
-        }
         return new ErrorExp();
     }
     return this;
@@ -7292,10 +7279,7 @@ Expression *CallExp::semantic(Scope *sc)
             /* Attempt to instantiate ti. If that works, go with it.
              * If not, go with partial explicit specialization.
              */
-            unsigned olderrors = global.errors;
             ti->semanticTiargs(sc);
-            if (olderrors != global.errors)
-                return new ErrorExp();
             if (ti->needsTypeInference(sc))
             {
                 /* Go with partial explicit specialization
@@ -7527,17 +7511,6 @@ Lagain:
     }
     if (e1->op == TOKerror)
         return e1;
-
-    // If there was an error processing any template argument,
-    // return an error without trying to resolve the template.
-    if (targsi && targsi->dim)
-    {
-        for (size_t k = 0; k < targsi->dim; k++)
-        {   Object *o = targsi->tdata()[k];
-            if (isError(o))
-                return new ErrorExp();
-        }
-    }
 
     if (e1->op == TOKdotvar && t1->ty == Tfunction ||
         e1->op == TOKdottd)

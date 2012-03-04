@@ -856,6 +856,8 @@ enum LINK Parser::parseLinkage()
             link = LINKpascal;
         else if (id == Id::D)
             link = LINKd;
+	else if (id == Id::js)
+	    link = LINKjs;
         else if (id == Id::C)
         {
             link = LINKc;

@@ -1512,10 +1512,6 @@ Statement *ForeachStatement::semantic(Scope *sc)
                     if (arg->storageClass & STCref)
                         error("symbol %s cannot be ref", s->toChars());
                 }
-                else if (e->op == TOKtype)
-                {
-                    var = new AliasDeclaration(loc, arg->ident, e->type);
-                }
                 else
                 {
                     arg->type = e->type;
@@ -2818,6 +2814,10 @@ Statement *PragmaStatement::semantic(Scope *sc)
         }
     }
 #endif
+   else if(ident == Id::no_js_output)
+   {
+	error("WTF is this used? %s", ident->toChars());
+   }
     else
         error("unrecognized pragma(%s)", ident->toChars());
 
@@ -4081,8 +4081,6 @@ Statement *SynchronizedStatement::semantic(Scope *sc)
     {
         exp = exp->semantic(sc);
         exp = resolveProperties(sc, exp);
-        if (exp->op == TOKerror)
-            goto Lbody;
         ClassDeclaration *cd = exp->type->isClassHandle();
         if (!cd)
             error("can only synchronize on class objects, not '%s'", exp->type->toChars());
@@ -4161,7 +4159,6 @@ Statement *SynchronizedStatement::semantic(Scope *sc)
         return s->semantic(sc);
     }
 #endif
-Lbody:
     if (body)
         body = body->semantic(sc);
     return this;

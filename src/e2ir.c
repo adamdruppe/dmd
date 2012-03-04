@@ -3377,7 +3377,7 @@ elem *CondExp::toElem(IRState *irs)
 
 elem *TypeExp::toElem(IRState *irs)
 {
-#if 0
+#ifdef DEBUG
     printf("TypeExp::toElem()\n");
 #endif
     error("type %s is not an expression", toChars());
@@ -4427,9 +4427,6 @@ Lagain:
                 e = el_una(OPld_d, TYcdouble, e);
                 fty = Tcomplex64;
                 goto Lagain;
-
-        case X(Tnull, Tarray):
-            goto Lzero;
 
         /* ============================= */
 

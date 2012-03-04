@@ -4167,8 +4167,6 @@ Expression *BinExp::interpretAssignCommon(InterState *istate, CtfeGoal goal, fp_
         if (isPointer(oldval->type))
         {   // Slicing a pointer
             oldval = oldval->interpret(istate, ctfeNeedLvalue);
-            if (exceptionOrCantInterpret(oldval))
-                return oldval;
             dinteger_t ofs;
             oldval = getAggregateFromPointer(oldval, &ofs);
             assignmentToSlicedPointer = true;
@@ -4277,16 +4275,11 @@ Expression *BinExp::interpretAssignCommon(InterState *istate, CtfeGoal goal, fp_
             aggregate = sexp->e1->interpret(istate, ctfeNeedLvalue);
             dinteger_t ofs;
             aggregate = getAggregateFromPointer(aggregate, &ofs);
-            if (aggregate->op == TOKnull)
-            {
-                error("cannot slice null pointer %s", sexp->e1->toChars());
-                return EXP_CANT_INTERPRET;
-            }
             dinteger_t hi = upperbound + ofs;
             firstIndex = lowerbound + ofs;
             if (firstIndex < 0 || hi > dim)
             {
-                error("slice [%jd..%jd] exceeds memory block bounds [0..%d]",
+                error("slice [%d..%jd] exceeds memory block bounds [0..%jd]",
                     firstIndex, hi,  dim);
                 return EXP_CANT_INTERPRET;
             }
@@ -4427,6 +4420,9 @@ Expression *BinExp::interpretAssignCommon(InterState *istate, CtfeGoal goal, fp_
     else
     {
         error("%s cannot be evaluated at compile time", toChars());
+#ifdef DEBUG
+        dump(0);
+#endif
     }
     return returnValue;
 }
@@ -5504,15 +5500,9 @@ Expression *CastExp::interpret(InterState *istate, CtfeGoal goal)
             e->type = type;
             return e;
         }
-
-        // Check if we have a null pointer (eg, inside a struct)
-        e1 = e1->interpret(istate);
-        if (e1->op != TOKnull)
-        {
-            error("pointer cast from %s to %s is not supported at compile time",
+        error("pointer cast from %s to %s is not supported at compile time",
                 e1->type->toChars(), to->toChars());
-            return EXP_CANT_INTERPRET;
-        }
+        return EXP_CANT_INTERPRET;
     }
     if (to->ty == Tarray && e1->op == TOKslice)
     {

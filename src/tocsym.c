@@ -260,6 +260,7 @@ Symbol *VarDeclaration::toSymbol()
                 m = mTYman_pas;
                 break;
 
+	    case LINKjs:
             case LINKc:
                 m = mTYman_c;
                 break;
@@ -391,6 +392,7 @@ Symbol *FuncDeclaration::toSymbol()
                     break;
 
                 case LINKc:
+		case LINKjs:
                     t->Tmangle = mTYman_c;
                     break;
 

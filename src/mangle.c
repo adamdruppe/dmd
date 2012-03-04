@@ -113,6 +113,7 @@ char *Declaration::mangle()
                 case LINKd:
                     break;
 
+		case LINKjs:
                 case LINKc:
                 case LINKwindows:
                 case LINKpascal:

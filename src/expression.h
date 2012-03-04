@@ -16,6 +16,7 @@
 #include "lexer.h"
 #include "arraytypes.h"
 #include "intrange.h"
+#include "microd.h"
 
 struct Type;
 struct Scope;
@@ -187,6 +188,8 @@ struct Expression : Object
     virtual Expression *buildArrayLoop(Parameters *fparams);
     int isArrayOperand();
 
+    virtual void toMicroD(md_fptr sink);
+
     // Back end
     virtual elem *toElem(IRState *irs);
     elem *toElemDtor(IRState *irs);
@@ -214,6 +217,7 @@ struct IntegerExp : Expression
     MATCH implicitConvTo(Type *t);
     void toCBuffer(OutBuffer *buf, HdrGenState *hgs);
     void toMangleBuffer(OutBuffer *buf);
+    void toMicroD(md_fptr sink);
     Expression *toLvalue(Scope *sc, Expression *e);
     elem *toElem(IRState *irs);
     dt_t **toDt(dt_t **pdt);
@@ -250,6 +254,8 @@ struct RealExp : Expression
     void toMangleBuffer(OutBuffer *buf);
     elem *toElem(IRState *irs);
     dt_t **toDt(dt_t **pdt);
+
+    void toMicroD(md_fptr sink);
 };
 
 struct ComplexExp : Expression
@@ -325,6 +331,7 @@ struct ThisExp : Expression
     int inlineCost3(InlineCostState *ics);
     Expression *doInline(InlineDoState *ids);
     //Expression *inlineScan(InlineScanState *iss);
+    void toMicroD(md_fptr sink);
 
     elem *toElem(IRState *irs);
 };
@@ -354,6 +361,7 @@ struct NullExp : Expression
     MATCH implicitConvTo(Type *t);
     Expression *castTo(Scope *sc, Type *t);
     Expression *interpret(InterState *istate, CtfeGoal goal = ctfeNeedRvalue);
+    void toMicroD(md_fptr sink);
     elem *toElem(IRState *irs);
     dt_t **toDt(dt_t **pdt);
 };
@@ -389,6 +397,7 @@ struct StringExp : Expression
     unsigned charAt(size_t i);
     void toCBuffer(OutBuffer *buf, HdrGenState *hgs);
     void toMangleBuffer(OutBuffer *buf);
+    void toMicroD(md_fptr sink);
     elem *toElem(IRState *irs);
     dt_t **toDt(dt_t **pdt);
 };
@@ -440,6 +449,8 @@ struct ArrayLiteralExp : Expression
 
     Expression *doInline(InlineDoState *ids);
     Expression *inlineScan(InlineScanState *iss);
+
+    void toMicroD(md_fptr sink);
 };
 
 struct AssocArrayLiteralExp : Expression
@@ -464,6 +475,8 @@ struct AssocArrayLiteralExp : Expression
 
     Expression *doInline(InlineDoState *ids);
     Expression *inlineScan(InlineScanState *iss);
+
+    void toMicroD(md_fptr sink);
 };
 
 struct StructLiteralExp : Expression
@@ -494,6 +507,7 @@ struct StructLiteralExp : Expression
     int isLvalue();
     Expression *toLvalue(Scope *sc, Expression *e);
     MATCH implicitConvTo(Type *t);
+    void toMicroD(md_fptr sink);
 
     int inlineCost3(InlineCostState *ics);
     Expression *doInline(InlineDoState *ids);
@@ -559,6 +573,8 @@ struct NewExp : Expression
     //int inlineCost3(InlineCostState *ics);
     Expression *doInline(InlineDoState *ids);
     //Expression *inlineScan(InlineScanState *iss);
+
+    void toMicroD(md_fptr sink);
 };
 
 struct NewAnonClassExp : Expression
@@ -587,6 +603,8 @@ struct SymbolExp : Expression
     SymbolExp(Loc loc, enum TOK op, int size, Declaration *var, int hasOverloads);
 
     elem *toElem(IRState *irs);
+
+    void toMicroD(md_fptr sink);
 };
 #endif
 
@@ -628,6 +646,7 @@ struct VarExp : SymbolExp
     Expression *toLvalue(Scope *sc, Expression *e);
     Expression *modifiableLvalue(Scope *sc, Expression *e);
     dt_t **toDt(dt_t **pdt);
+    void toMicroD(md_fptr sink);
 
     int inlineCost3(InlineCostState *ics);
     Expression *doInline(InlineDoState *ids);
@@ -674,6 +693,8 @@ struct FuncExp : Expression
     int inlineCost3(InlineCostState *ics);
     //Expression *doInline(InlineDoState *ids);
     //Expression *inlineScan(InlineScanState *iss);
+
+    void toMicroD(md_fptr sink);
 };
 
 // Declaration of a symbol
@@ -688,6 +709,7 @@ struct DeclarationExp : Expression
     Expression *interpret(InterState *istate, CtfeGoal goal = ctfeNeedRvalue);
     void toCBuffer(OutBuffer *buf, HdrGenState *hgs);
     elem *toElem(IRState *irs);
+    void toMicroD(md_fptr sink);
 
     int inlineCost3(InlineCostState *ics);
     Expression *doInline(InlineDoState *ids);
@@ -766,6 +788,8 @@ struct UnaExp : Expression
     Expression *inlineScan(InlineScanState *iss);
 
     virtual Expression *op_overload(Scope *sc);
+
+    void toMicroD(md_fptr sink);
 };
 
 struct BinExp : Expression
@@ -801,6 +825,7 @@ struct BinExp : Expression
     Expression *op_overload(Scope *sc);
     Expression *compare_overload(Scope *sc, Identifier *id);
 
+    void toMicroD(md_fptr sink);
     elem *toElemBin(IRState *irs, int op);
 };
 
@@ -819,6 +844,8 @@ struct BinAssignExp : BinExp
     int isLvalue();
     Expression *toLvalue(Scope *sc, Expression *ex);
     Expression *modifiableLvalue(Scope *sc, Expression *e);
+
+    //void toMicroD(md_fptr sink);
 };
 
 /****************************************************************/
@@ -847,6 +874,7 @@ struct AssertExp : UnaExp
     Expression *semantic(Scope *sc);
     Expression *interpret(InterState *istate, CtfeGoal goal = ctfeNeedRvalue);
     void toCBuffer(OutBuffer *buf, HdrGenState *hgs);
+    void toMicroD(md_fptr sink);
 
     Expression *doInline(InlineDoState *ids);
     Expression *inlineScan(InlineScanState *iss);
@@ -888,6 +916,7 @@ struct DotVarExp : UnaExp
     void toCBuffer(OutBuffer *buf, HdrGenState *hgs);
     void dump(int indent);
     elem *toElem(IRState *irs);
+    void toMicroD(md_fptr sink);
 };
 
 struct DotTemplateInstanceExp : UnaExp
@@ -917,6 +946,8 @@ struct DelegateExp : UnaExp
 
     int inlineCost3(InlineCostState *ics);
     elem *toElem(IRState *irs);
+
+    void toMicroD(md_fptr sink);
 };
 
 struct DotTypeExp : UnaExp
@@ -952,6 +983,7 @@ struct CallExp : UnaExp
     Expression *toLvalue(Scope *sc, Expression *e);
     Expression *addDtorHook(Scope *sc);
     MATCH implicitConvTo(Type *t);
+    void toMicroD(md_fptr sink);
 
     int inlineCost3(InlineCostState *ics);
     Expression *doInline(InlineDoState *ids);
@@ -968,6 +1000,7 @@ struct AddrExp : UnaExp
     Expression *castTo(Scope *sc, Type *t);
     Expression *optimize(int result);
     Expression *interpret(InterState *istate, CtfeGoal goal = ctfeNeedRvalue);
+    void toMicroD(md_fptr sink);
 };
 
 struct PtrExp : UnaExp
@@ -983,6 +1016,8 @@ struct PtrExp : UnaExp
     elem *toElem(IRState *irs);
     Expression *optimize(int result);
     Expression *interpret(InterState *istate, CtfeGoal goal = ctfeNeedRvalue);
+
+    void toMicroD(md_fptr sink);
 
     // For operator overloading
     Identifier *opId();
@@ -1047,6 +1082,8 @@ struct BoolExp : UnaExp
     Expression *interpret(InterState *istate, CtfeGoal goal = ctfeNeedRvalue);
     int isBit();
     elem *toElem(IRState *irs);
+
+    void toMicroD(md_fptr sink);
 };
 
 struct DeleteExp : UnaExp
@@ -1077,6 +1114,7 @@ struct CastExp : UnaExp
     void buildArrayIdent(OutBuffer *buf, Expressions *arguments);
     Expression *buildArrayLoop(Parameters *fparams);
     elem *toElem(IRState *irs);
+    void toMicroD(md_fptr sink);
 
     // For operator overloading
     Identifier *opId();
@@ -1121,6 +1159,8 @@ struct SliceExp : UnaExp
 
     Expression *doInline(InlineDoState *ids);
     Expression *inlineScan(InlineScanState *iss);
+
+    void toMicroD(md_fptr sink);
 };
 
 struct ArrayLengthExp : UnaExp
@@ -1133,6 +1173,8 @@ struct ArrayLengthExp : UnaExp
     elem *toElem(IRState *irs);
 
     static Expression *rewriteOpAssign(BinExp *exp);
+
+    void toMicroD(md_fptr sink);
 };
 
 // e1[a0,a1,a2,a3,...]
@@ -1185,6 +1227,8 @@ struct CommaExp : BinExp
     Expression *optimize(int result);
     Expression *interpret(InterState *istate, CtfeGoal goal = ctfeNeedRvalue);
     elem *toElem(IRState *irs);
+
+    void toMicroD(md_fptr sink);
 };
 
 struct IndexExp : BinExp
@@ -1203,6 +1247,8 @@ struct IndexExp : BinExp
     Expression *doInline(InlineDoState *ids);
 
     elem *toElem(IRState *irs);
+
+    void toMicroD(md_fptr sink);
 };
 
 /* For both i++ and i--
@@ -1215,6 +1261,7 @@ struct PostExp : BinExp
     void toCBuffer(OutBuffer *buf, HdrGenState *hgs);
     Identifier *opId();    // For operator overloading
     elem *toElem(IRState *irs);
+    void toMicroD(md_fptr sink);
 };
 
 /* For both ++i and --i
@@ -1237,6 +1284,8 @@ struct AssignExp : BinExp
     void buildArrayIdent(OutBuffer *buf, Expressions *arguments);
     Expression *buildArrayLoop(Parameters *fparams);
     elem *toElem(IRState *irs);
+
+    void toMicroD(md_fptr sink);
 };
 
 struct ConstructExp : AssignExp
@@ -1590,6 +1639,8 @@ struct IdentityExp : BinExp
     Expression *optimize(int result);
     Expression *interpret(InterState *istate, CtfeGoal goal = ctfeNeedRvalue);
     elem *toElem(IRState *irs);
+
+    void toMicroD(md_fptr sink);
 };
 
 /****************************************************************/
@@ -1618,6 +1669,8 @@ struct CondExp : BinExp
     Expression *inlineScan(InlineScanState *iss);
 
     elem *toElem(IRState *irs);
+
+    void toMicroD(md_fptr sink);
 };
 
 #if DMDV2

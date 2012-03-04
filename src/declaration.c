@@ -490,8 +490,7 @@ void AliasDeclaration::semantic(Scope *sc)
         if (s)
             goto L2;
 
-        if (e->op != TOKerror)
-            error("cannot alias an expression %s", e->toChars());
+        error("cannot alias an expression %s", e->toChars());
         t = e->type;
     }
     else if (t)

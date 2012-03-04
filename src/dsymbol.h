@@ -20,6 +20,7 @@
 
 #include "mars.h"
 #include "arraytypes.h"
+#include "microd.h"
 
 struct Identifier;
 struct Scope;
@@ -161,6 +162,7 @@ struct Dsymbol : Object
     virtual void toCBuffer(OutBuffer *buf, HdrGenState *hgs);
     virtual void toDocBuffer(OutBuffer *buf);
     virtual void toJsonBuffer(OutBuffer *buf);
+    virtual void toMicroD();
     virtual unsigned size(Loc loc);
     virtual int isforwardRef();
     virtual void defineRef(Dsymbol *s);
@@ -245,6 +247,8 @@ struct Dsymbol : Object
 #if TARGET_NET
     virtual PragmaScope* isPragmaScope() { return NULL; }
 #endif
+
+    int suppress_js_output;
 };
 
 // Dsymbol that generates a scope
@@ -280,6 +284,8 @@ struct ScopeDsymbol : Dsymbol
     static int foreach(Dsymbols *members, ForeachDg dg, void *ctx, size_t *pn=NULL);
 
     ScopeDsymbol *isScopeDsymbol() { return this; }
+
+    void toMicroD();
 };
 
 // With statement scope

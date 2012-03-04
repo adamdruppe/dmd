@@ -18,6 +18,7 @@
 #include "dsymbol.h"
 #include "lexer.h"
 #include "mtype.h"
+#include "microd.h"
 
 struct Expression;
 struct Statement;
@@ -156,6 +157,7 @@ struct Declaration : Dsymbol
     int isRef()   { return storage_class & STCref; }
 
     enum PROT prot();
+    virtual void toMicroD(md_fptr sink);
 
     Declaration *isDeclaration() { return this; }
 };
@@ -231,6 +233,8 @@ struct AliasDeclaration : Declaration
     void toDocBuffer(OutBuffer *buf);
 
     AliasDeclaration *isAliasDeclaration() { return this; }
+
+    void toMicroD(md_fptr sink);
 };
 
 /**************************************************************/
@@ -294,6 +298,8 @@ struct VarDeclaration : Declaration
     void checkCtorConstInit();
     void checkNestedReference(Scope *sc, Loc loc);
     Dsymbol *toAlias();
+    void toMicroD();
+    void toMicroD(md_fptr sink);
 
     Symbol *toSymbol();
     void toObjFile(int multiobj);                       // compile to .obj file
@@ -659,6 +665,10 @@ struct FuncDeclaration : Declaration
     Expression *expandInline(InlineScanState *iss, Expression *ethis, Expressions *arguments, Statement **ps);
     const char *kind();
     void toDocBuffer(OutBuffer *buf);
+
+    int inMicroD;
+    void toMicroD();
+    void toMicroD(md_fptr sink);
     FuncDeclaration *isUnique();
     void checkNestedReference(Scope *sc, Loc loc);
     int needsClosure();

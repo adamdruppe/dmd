@@ -45,6 +45,8 @@ Dsymbol::Dsymbol()
     this->loc = 0;
     this->comment = NULL;
     this->scope = NULL;
+
+    this->suppress_js_output = 0;
 }
 
 Dsymbol::Dsymbol(Identifier *ident)
@@ -58,6 +60,8 @@ Dsymbol::Dsymbol(Identifier *ident)
     this->loc = 0;
     this->comment = NULL;
     this->scope = NULL;
+
+    this->suppress_js_output = 0;
 }
 
 int Dsymbol::equals(Object *o)
@@ -821,20 +825,18 @@ Dsymbol *ScopeDsymbol::search(Loc loc, Identifier *ident, int flags)
             //printf("\tscanning import '%s', prots = %d, isModule = %p, isImport = %p\n", ss->toChars(), prots[i], ss->isModule(), ss->isImport());
             /* Don't find private members if ss is a module
              */
-            s2 = ss->search(loc, ident, ss->isModule() ? 1 : 0);
+            s2 = ss->search(loc, ident, ss->isImport() ? 1 : 0);
             if (!s)
                 s = s2;
             else if (s2 && s != s2)
             {
                 if (s->toAlias() == s2->toAlias())
                 {
-                    /* After following aliases, we found the same
-                     * symbol, so it's not an ambiguity.  But if one
-                     * alias is deprecated or less accessible, prefer
-                     * the other.
+                    /* After following aliases, we found the same symbol,
+                     * so it's not an ambiguity.
+                     * But if one alias is deprecated, prefer the other.
                      */
-                    if (s->isDeprecated() ||
-                        s2->prot() > s->prot() && s2->prot() != PROTnone)
+                    if (s->isDeprecated())
                         s = s2;
                 }
                 else
@@ -864,8 +866,7 @@ Dsymbol *ScopeDsymbol::search(Loc loc, Identifier *ident, int flags)
                             {   Dsymbol *s3 = a->a[j];
                                 if (s2->toAlias() == s3->toAlias())
                                 {
-                                    if (s3->isDeprecated() ||
-                                        s2->prot() > s3->prot() && s2->prot() != PROTnone)
+                                    if (s3->isDeprecated())
                                         a->a[j] = s2;
                                     goto Lcontinue;
                                 }
