@@ -346,7 +346,7 @@ Usage:\n\
 #endif
 "  -man           open web browser on manual page\n\
   -map           generate linker .map file\n\
-  -md            generate MicroD files\n\
+  -js            generate Javascript source files\n\
   -noboundscheck turns off array bounds checking for all functions\n\
   -nofloat       do not emit reference to floating point\n\
   -O             optimize\n\
@@ -558,7 +558,7 @@ int tryMain(int argc, char *argv[])
                 global.params.is64bit = 0;
             else if (strcmp(p + 1, "m64") == 0)
                 global.params.is64bit = 1;
-            else if (strcmp(p + 1, "md") == 0)
+            else if (strcmp(p + 1, "js") == 0)
                 global.params.microd = 1;
             else if (strcmp(p + 1, "profile") == 0)
                 global.params.trace = 1;
@@ -1367,6 +1367,7 @@ int tryMain(int argc, char *argv[])
 
     if (global.params.microd)
     {
+        VersionCondition::addPredefinedGlobalIdent("dtojs");
         microd_generate(&modules);
         return status;
     }

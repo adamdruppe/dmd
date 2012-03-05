@@ -4,7 +4,7 @@
 #include "microd.h"
 
 #include <assert.h>
-#include<typeinfo>
+#include <typeinfo>
 
 #include "rmem.h"
 #include "root.h"
@@ -32,9 +32,6 @@ void microd_decl3(const char *format, ...);
 void microd_decl12(const char *format, ...);
 void microd_decl23(const char *format, ...);
 void microd_decl123(const char *format, ...);
-
-char *comment1(const char *format, ...);
-char *comment2(const char *format, ...);
 
 void sinkImplements(md_fptr sink, ClassDeclaration* decl1, int prependComma);
 
@@ -104,7 +101,7 @@ private:
 
 void getEthis(md_fptr sink, Loc loc, FuncDeclaration *fd);
 void callfunc(md_fptr sink, int directcall, Type *tret, Expression *ec, Type *ectype,
-              FuncDeclaration *fd, Type *t, Expression *ehidden, Expressions *arguments);
+	FuncDeclaration *fd, Type *t, Expression *ehidden, Expressions *arguments);
 void escapeString(md_fptr sink, StringExp *se);
 
 //////////////////////////////////////////////////////////////////////////
@@ -113,35 +110,37 @@ void microd_generate(Modules *modules)
 {
 	// FIXME: filthy hack for associative array iteration. I want to use JS for(x in y) but can't represent that in object.d itself right now.,
 	// and semantic has already translated foreach into _aaApply calls...
-	buf1.writestring("function _aaApply(obj, keysize, func) { for(var i in obj) { var result = func(obj[i]); if(result) return result;  }}");
-	buf1.writestring("function _aaApply2(obj, keysize, func) { for(var i in obj) { var result = func(i, obj[i]); if(result) return result;  }}");
+	buf1.writestring("function _aaApply(obj, keysize, func) { for(var i in obj) { var result = func(obj[i]); if(result) return result;  }}\n");
+	buf1.writestring("function _aaApply2(obj, keysize, func) { for(var i in obj) { var result = func(i, obj[i]); if(result) return result;  }}\n");
 
 	// also for struct copying...
-	buf1.writestring("function __d_struct_copy(obj) { if(obj === null) return obj; var n = {}; for(i in obj) n[i] = obj[i]; return n; }");
+	buf1.writestring("function __d_struct_copy(obj) { if(obj === null) return obj; var n = {}; for(i in obj) n[i] = obj[i]; return n; }\n");
 
 	// and for binding delegates...
-	buf1.writestring("function __d_delegate(d_this, func) { return function() { var args = []; for(var a = 0; a < arguments.length; a++) args.push(arguments[a]); args.push(d_this); return func.apply(d_this, args); } }");
+	buf1.writestring("function __d_delegate(d_this, func) { return function() { var args = []; for(var a = 0; a < arguments.length; a++) args.push(arguments[a]); args.push(d_this); return func.apply(d_this, args); } }\n");
 
-    for (size_t i = 0; i < modules->dim; i++)
-    {
-        Module *m = modules->tdata()[i];
-        if (global.params.verbose)
-            printf("microd gen %s\n", m->toChars());
+	for (size_t i = 0; i < modules->dim; i++) {
+		Module *m = modules->tdata()[i];
+		if (global.params.verbose)
+			printf("microd gen %s\n", m->toChars());
 
-        m->toMicroD();
-    }
+		m->toMicroD();
+	}
 
-    char *n = FileName::name((*global.params.objfiles)[0]);
-    File *mdfile = new File(FileName::forceExt(n, "js"));
-    mdfile->ref = 1;
+	char *n = global.params.exefile;
+	if(n == NULL)
+		n = FileName::name((*global.params.objfiles)[0]);
+	File *mdfile = new File(FileName::forceExt(n, "js"));
+	mdfile->ref = 1;
 
-    buf1.writestring(buf2.toChars());
-    buf1.writestring(buf3.toChars());
+	buf1.writestring(buf2.toChars());
+	buf1.writestring(buf3.toChars());
 
-    buf1.writestring("if(_Dmain != null) _Dmain();\n");
+	if(!global.params.lib) // if we're making a library, we don't want to call Dmain multiple times if the files are concatenated
+		buf1.writestring("if(_Dmain != null) _Dmain();\n");
 
-    mdfile->setbuffer(buf1.data, buf1.offset);
-    mdfile->writev();
+	mdfile->setbuffer(buf1.data, buf1.offset);
+	mdfile->writev();
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -341,6 +340,10 @@ void FuncDeclaration::toMicroD()
     assert(tf);
     // tf->next->toMicroD(sink);
     sink("function ");
+
+    if(isExport())
+    	sink("/*export*/");
+
     if(!isFuncLiteralDeclaration())
 	    sink(mangle());
 
@@ -427,13 +430,8 @@ void ScopeDsymbol::toMicroD() {
 			// but I think I need them both to do functions and structs..
 					s->toMicroD();
 			}  else {
-				printf("idk [%s]  %s\n", typeid(*this).name(), this->toChars());
+				//printf("idk [%s]  %s\n", typeid(*this).name(), this->toChars());
 				s->toMicroD();
-				/*
-				assert(scope);
-				s->semantic(scope);
-				s->toMicroD();
-				*/
 			}
 		}
 	}
@@ -467,6 +465,8 @@ void VarDeclaration::toMicroD()
 
 	type->toMicroD(sink);
 	sink(" ");
+        if(isExport())
+    	     sink("/*export*/");
 	sink(mangle());
 	microd_decl3(" = ");
 
@@ -670,6 +670,8 @@ void VarDeclaration::toMicroD(md_fptr sink)
     	assert(type);
     	type->toMicroD(sink);
 	    sink(" ");
+        if(isExport())
+    	     sink("/*export*/");
     }
 
     if(inComma) {
@@ -983,7 +985,7 @@ void TryFinallyStatement::toMicroD(md_fptr sink) {
 		sink("try {");
 	body->toMicroD(sink); // body is a TryCatchStatement
 	if(needsTry)
-		sink("}");
+		sink("} ");
 	if(finalbody) {
 		sink("finally {\n");
 		finalbody->toMicroD(sink);
@@ -1005,7 +1007,7 @@ void TryCatchStatement::toMicroD(md_fptr sink) {
 		for(unsigned i = 0; i < catches->dim; i++) {
 			Catch* c = (Catch*) catches->data[i];
 			if(c) {
-				sink("if(!__d_exception_%d_caught) {", catchCount);
+				sink("if(!__d_exception_%d_caught) {\n", catchCount);
 				Dsymbol* t1 = c->type->toDsymbol(NULL);
 				assert(t1);
 				ClassDeclaration* t = t1->isClassDeclaration();
@@ -1015,8 +1017,8 @@ void TryCatchStatement::toMicroD(md_fptr sink) {
 				sink("if(%s) {\n", c->var->mangle());
 				sink("__d_exception_%d_caught = true;\n", catchCount);
 				c->handler->toMicroD(sink);
-				sink("}");
-				sink("}"); // if(!caught)
+				sink("}\n");
+				sink("}\n"); // if(!caught)
 			}
 		}
 
@@ -1548,7 +1550,7 @@ void SwitchStatement::toMicroD(md_fptr sink) {
 	condition->toMicroD(sink);
 	sink(") {\n");
 	body->toMicroD(sink);
-	sink("}");
+	sink("}\n");
 }
 
 void CaseStatement::toMicroD(md_fptr sink) {
@@ -1625,20 +1627,16 @@ void IfStatement::toMicroD(md_fptr sink)
 	sink("if (");
 	assert(condition);
 	condition->toMicroD(sink);
-	sink(") {");
+	sink(") {\n");
 	if(ifbody)
 	ifbody->toMicroD(sink);
 	sink("}");
 	if(elsebody) {
-		sink("else {");
+		sink(" else {\n");
 		elsebody->toMicroD(sink);
 		sink("}");
 	}
-}
-
-void ConditionalStatement::toMicroD(md_fptr sink)
-{
-	// FIXME I don't even know what this actually is
+	sink("\n");
 }
 
 void CondExp::toMicroD(md_fptr sink) {
@@ -1758,30 +1756,6 @@ void microd_decl123(const char *format, ...)
     buf2.vprintf(format,ap);
     buf3.vprintf(format,ap);
     va_end(ap);
-}
-
-
-char *comment1(const char *format, ...)
-{
-    va_list ap;
-    va_start(ap, format);
-    OutBuffer buf;
-    buf.writestring("/***********************************************************\n * \n * ");
-    buf.vprintf(format, ap);
-    buf.writestring("\n * \n */\n\n");
-    va_end(ap);
-    return buf.extractData();
-}
-char *comment2(const char *format, ...)
-{
-    va_list ap;
-    va_start(ap, format);
-    OutBuffer buf;
-    buf.writestring("/***********************************************************\n * ");
-    buf.vprintf(format, ap);
-    buf.writestring("\n */\n\n");
-    va_end(ap);
-    return buf.extractData();
 }
 
 void getEthis(md_fptr sink, Loc loc, FuncDeclaration *fd)

@@ -457,7 +457,6 @@ struct ConditionalStatement : Statement
     int blockExit(bool mustNotThrow);
 
     void toCBuffer(OutBuffer *buf, HdrGenState *hgs);
-    void toMicroD(md_fptr sink);
 };
 
 struct PragmaStatement : Statement
