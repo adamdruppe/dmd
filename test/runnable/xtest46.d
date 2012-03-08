@@ -2493,10 +2493,11 @@ void test129()
 
 const shared class C5107
 {
+    int x;
 }
 
-static assert(is(C5107 ==  const)); // okay
-static assert(is(C5107 == shared)); // fails!
+static assert(is(typeof(C5107.x) ==  const)); // okay
+static assert(is(typeof(C5107.x) == shared)); // fails!
 
 /***************************************************/
 
@@ -3833,6 +3834,15 @@ void test5799()
 
 enum Foo6529 : char { A='a' }
 ref const(Foo6529) func6529(const(Foo6529)[] arr){ return arr[0]; }
+
+/***************************************************/
+
+void test783()
+{
+    const arr = [ 1,2,3 ];
+    const i = 2;
+    auto jhk = new int[arr[i]]; // "need size of rightmost array, not type arr[i]"
+}
 
 /***************************************************/
 
