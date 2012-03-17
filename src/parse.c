@@ -130,7 +130,7 @@ Dsymbols *Parser::parseModule()
 
     decldefs = parseDeclDefs(0);
     if (token.value != TOKeof)
-    {   error("unrecognized declaration");
+    {   error(loc, "unrecognized declaration");
         goto Lerr;
     }
     return decldefs;
@@ -1379,8 +1379,15 @@ Parameters *Parser::parseParameters(int *pvarargs, TemplateParameters **tpl)
                         error("scope cannot be ref or out");
 
                     Token *t;
+#if 0
                     if (tpl && !stc && token.value == TOKidentifier &&
                         (t = peek(&token), (t->value == TOKcomma || t->value == TOKrparen)))
+#else
+                    if (tpl && token.value == TOKidentifier &&
+                        (t = peek(&token), (t->value == TOKcomma ||
+                                            t->value == TOKrparen ||
+                                            t->value == TOKdotdotdot)))
+#endif
                     {   Identifier *id = Lexer::uniqueId("__T");
                         at = new TypeIdentifier(loc, id);
                         if (!*tpl)
@@ -6591,6 +6598,7 @@ void initPrecedence()
     precedence[TOKtraits] = PREC_primary;
     precedence[TOKdefault] = PREC_primary;
     precedence[TOKoverloadset] = PREC_primary;
+    precedence[TOKvoid] = PREC_primary;
 #endif
 
     // post

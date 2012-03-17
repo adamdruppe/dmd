@@ -167,6 +167,10 @@ bool Dsymbol::hasStaticCtorOrDtor()
     return FALSE;
 }
 
+void Dsymbol::setFieldOffset(AggregateDeclaration *ad, unsigned *poffset, bool isunion)
+{
+}
+
 char *Dsymbol::toChars()
 {
     return ident ? ident->toChars() : (char *)"__anonymous";
@@ -558,6 +562,11 @@ Type *Dsymbol::getType()
 int Dsymbol::needThis()
 {
     return FALSE;
+}
+
+int Dsymbol::apply(Dsymbol_apply_ft_t fp, void *param)
+{
+    return (*fp)(this, param);
 }
 
 int Dsymbol::addMember(Scope *sc, ScopeDsymbol *sd, int memnum)

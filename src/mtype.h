@@ -304,6 +304,7 @@ struct Type : Object
     virtual unsigned memalign(unsigned salign);
     virtual Expression *defaultInit(Loc loc = 0);
     virtual Expression *defaultInitLiteral(Loc loc);
+    virtual Expression *voidInitLiteral(VarDeclaration *var);
     virtual int isZeroInit(Loc loc = 0);                // if initializer is 0
     virtual dt_t **toDt(dt_t **pdt);
     Identifier *getTypeInfoIdent(int internal);
@@ -464,6 +465,7 @@ struct TypeSArray : TypeArray
     MATCH implicitConvTo(Type *to);
     Expression *defaultInit(Loc loc);
     Expression *defaultInitLiteral(Loc loc);
+    Expression *voidInitLiteral(VarDeclaration *var);
     dt_t **toDt(dt_t **pdt);
     dt_t **toDtElem(dt_t **pdt, Expression *e);
     MATCH deduceType(Scope *sc, Type *tparam, TemplateParameters *parameters, Objects *dedtypes, unsigned *wildmatch = NULL);
@@ -488,6 +490,7 @@ struct TypeDArray : TypeArray
     d_uns64 size(Loc loc);
     unsigned alignsize();
     Type *semantic(Loc loc, Scope *sc);
+    void resolve(Loc loc, Scope *sc, Expression **pe, Type **pt, Dsymbol **ps);
     void toDecoBuffer(OutBuffer *buf, int flag);
     void toCBuffer2(OutBuffer *buf, HdrGenState *hgs, int mod);
     Expression *dotExp(Scope *sc, Expression *e, Identifier *ident);
@@ -762,6 +765,7 @@ struct TypeStruct : Type
     unsigned memalign(unsigned salign);
     Expression *defaultInit(Loc loc);
     Expression *defaultInitLiteral(Loc loc);
+    Expression *voidInitLiteral(VarDeclaration *var);
     int isZeroInit(Loc loc);
     int isAssignable();
     int checkBoolean();

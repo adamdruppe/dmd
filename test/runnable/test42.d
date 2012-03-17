@@ -4812,6 +4812,51 @@ void nextis(void delegate() dg = {}) {}
 
 /***************************************************/
 
+template T3509(bool b) { static assert (b); }
+
+template Mix3509() { void f() {} }
+
+class C3509 {
+    alias T3509!(is(typeof(M.f))) U;
+    mixin Mix3509!() M;
+}
+
+/***************************************************/
+
+struct S3510(int x) {}
+
+template Mix3510() { Sa s; }
+
+class C3510 {
+    mixin Mix3510!();
+    alias S3510!(0) Sa;
+}
+
+/***************************************************/
+
+struct Array243(T) if (is(T == bool))
+{
+    struct Range
+    {
+        Array243!bool _outer;
+        ulong _a, _b, _c;
+	ulong _d;
+    }
+
+    Range opSlice()
+    {
+        return Range(this, 0, 3);
+    }
+
+}
+
+
+void test243() {
+    Array243!bool a;
+}
+
+/***************************************************/
+
 int main()
 {
     test1();
@@ -5061,6 +5106,7 @@ int main()
     test7502();
     test4820();
     test4820_2();
+    test243();
 
     writefln("Success");
     return 0;
