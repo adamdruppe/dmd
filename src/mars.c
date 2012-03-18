@@ -338,6 +338,7 @@ Usage:\n\
   -ignore        ignore unsupported pragmas\n\
   -inline        do function inlining\n\
   -Jpath         where to look for string imports\n\
+  -js            generate Javascript source files\n\
   -Llinkerflag   pass linkerflag to link\n\
   -lib           generate library rather than object files\n"
 #if TARGET_LINUX || TARGET_OSX || TARGET_FREEBSD || TARGET_OPENBSD || TARGET_SOLARIS
@@ -346,7 +347,6 @@ Usage:\n\
 #endif
 "  -man           open web browser on manual page\n\
   -map           generate linker .map file\n\
-  -js            generate Javascript source files\n\
   -noboundscheck turns off array bounds checking for all functions\n\
   -nofloat       do not emit reference to floating point\n\
   -O             optimize\n\
@@ -1176,6 +1176,10 @@ int tryMain(int argc, char *argv[])
         }
     }
 
+    if (global.params.microd)
+    {
+        VersionCondition::addPredefinedGlobalIdent("dtojs");
+    }
     // Read files
 #define ASYNCREAD 1
 #if ASYNCREAD
@@ -1367,7 +1371,6 @@ int tryMain(int argc, char *argv[])
 
     if (global.params.microd)
     {
-        VersionCondition::addPredefinedGlobalIdent("dtojs");
         microd_generate(&modules);
         return status;
     }

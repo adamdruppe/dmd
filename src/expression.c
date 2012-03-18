@@ -9886,7 +9886,7 @@ Expression *AssignExp::semantic(Scope *sc)
                 e = new CallExp(loc, ex, die->e1);
                 e = e->trySemantic(sc);
                 if (!e)
-                {   error("not a property");
+                {   error("not a property, %s", die->toChars());
                     return new ErrorExp();
                 }
                 e1 = e;

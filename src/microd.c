@@ -258,7 +258,7 @@ void FuncDeclaration::toMicroD(md_fptr sink) {
 	else {
 		if(linkage == LINKjs) {
 			AggregateDeclaration* parent = isThis();
-			char* name = NULL;
+			const char* name = NULL;
 			if(parent) {
 				name = parent->toChars();
 				// D considers these to be a part of the class, but we want a part of the object...
@@ -292,6 +292,8 @@ void FuncDeclaration::toMicroD(md_fptr sink) {
 
 void FuncDeclaration::toMicroD()
 {
+	//printf("%s\n", toPrettyChars());
+
 	if(suppress_js_output) return;
     // Find module m for this function
     Module *m = NULL;
@@ -305,8 +307,8 @@ void FuncDeclaration::toMicroD()
     MDState xmds(m, this);
 
 	if(!type) {
+		//printf("skipping: %s\n", toChars());
 		return;
-		printf("skipping: %s\n", toChars());
 	}
     assert(type);
 
@@ -316,23 +318,22 @@ void FuncDeclaration::toMicroD()
     /// functions without bodies shouldn't be there in JS
     /// it is probably just a built in
     if(!fbody) {
+    	//printf("no body on %s\n", toChars());
     	return;
     }
 
 
 	// FIXME: I did this because binaryFunc in std.functional nests a function,
 	// but then uses it later. I tried moving it to the outside, but that breaks
-	// other nested funcs.
+	// other nested funcs, so now it duplicates the definition.
 
 	// so the real FIXME is to find a way to take unnecessary function wrappers out.
-	/*
 	if(isNested() && !needsClosure() && !isFuncLiteralDeclaration()) {
 		// these might be reused I think.... I'm moving it outside the present location
 		// which should be ok since it doesn't need a closure. I hope. Maybe. FIXME: needs more testing
 
-		sink = &microd_decl2;
+		sink = &microd_decl23;
 	}
-	*/
 
     inMicroD = 1; // FIXME: this is so nested references don't output multiple times. I wonder if there's a cleaner way?
 
@@ -370,8 +371,7 @@ void FuncDeclaration::toMicroD()
 	        vthis->toMicroD(sink);
 	} else {
 		assert(tf);
-		assert(tf->parameters);
-            if (tf->parameters->dim)
+            if (tf->parameters && tf->parameters->dim)
                 sink(", ");
 	        vthis->toMicroD(sink);
 	}
@@ -458,7 +458,8 @@ void VarDeclaration::toMicroD()
 	md_fptr sink = &microd_decl3;
 
 	if(storage_class & STCstatic)
-		assert(0);
+		sink = &microd_decl2;
+//		assert(0);
 
 	if(linkage == LINKjs) // don't put out things that are supposed to be in js
 		return;
@@ -504,7 +505,8 @@ void StructDeclaration::toMicroD()
         }
         else
         {
-    //        s->error(" %s not supported in MicroD", typeid(*this).name());
+            //s->error(" %s not supported in MicroD", typeid(*this).name());
+	    s->toMicroD();
     //        sink("null/*__dsymbol__*/;\n");
         }
     }
@@ -1029,6 +1031,8 @@ void TryCatchStatement::toMicroD(md_fptr sink) {
 	}
 }
 
+int inAssignment = 0; // yet another hack. this one is used for reference assignments
+
 void UnaExp::toMicroD(md_fptr sink) {
 	switch(op) {
 		case TOKneg:
@@ -1047,13 +1051,27 @@ void UnaExp::toMicroD(md_fptr sink) {
 }
 
 void PostExp::toMicroD(md_fptr sink) {
+	VarExp* exp = dynamic_cast<VarExp*>(e1);
 	switch(op) {
 		case TOKplusplus:
 		case TOKminusminus:
-			sink("(");
-		        e1->toMicroD(sink);
-			sink(")");
-			sink(Token::toChars(op));
+			if(exp && exp->var->isRef()) {
+				// references are done as lambdas,
+				// so we have to get and set here
+
+				inAssignment = 1;
+				e1->toMicroD(sink);
+				inAssignment = 0;
+				sink("(");
+				e1->toMicroD(sink);
+				sink(op == TOKplusplus ? "+1" : "-1");
+				sink(")");
+			} else {
+				sink("(");
+			        e1->toMicroD(sink);
+				sink(")");
+				sink(Token::toChars(op));
+			}
 		break;
 		default:
 			Expression::toMicroD(sink);
@@ -1078,8 +1096,6 @@ void IdentityExp::toMicroD(md_fptr sink) {
 	e2->toMicroD(sink);
 	sink(")");
 }
-
-int inAssignment = 0; // yet another hack. this one is used for reference assignments
 
 void AssignExp::toMicroD(md_fptr sink) {
 	VarExp* exp = dynamic_cast<VarExp*>(e1);
@@ -1205,7 +1221,15 @@ void BinExp::toMicroD(md_fptr sink)
         sink(" = (");
         e1->toMicroD(sink);
         sink(".concat(");
-        e2->toMicroD(sink);
+	if(e1->type->isString() && e2->type->isintegral()) {
+		// we do NOT want int -> string in JS. We instead
+		// want to treat it as a char.
+		sink("String.fromCharCode(");
+	        e2->toMicroD(sink);
+		sink(")");
+	} else {
+	        e2->toMicroD(sink);
+	}
         sink("))");
 	break;
 
@@ -1214,7 +1238,16 @@ void BinExp::toMicroD(md_fptr sink)
         sink("(");
         e1->toMicroD(sink);
         sink(".concat(");
-        e2->toMicroD(sink);
+	if(e1->type->isString() && e2->type->isintegral()) {
+		// we do NOT want int -> string in JS. We instead
+		// want to treat it as a char.
+		// FIXME: copy/paste
+		sink("String.fromCharCode(");
+	        e2->toMicroD(sink);
+		sink(")");
+	} else {
+	        e2->toMicroD(sink);
+	}
         sink("))");
 	break;
     default:
@@ -1524,7 +1557,7 @@ void StructLiteralExp::toMicroD(md_fptr sink)
 
 void Initializer::toMicroD(md_fptr sink)
 {
-    error("This type of initializer, %s, not supported in MicroD ('%s')", typeid(*this).name(), toChars());
+    error(loc, "This type of initializer, %s, not supported in MicroD ('%s')", typeid(*this).name(), toChars());
     sink("__init__");
 }
 
@@ -1618,8 +1651,11 @@ void CompoundDeclarationStatement::toMicroD(md_fptr sink)
 
 void ExpStatement::toMicroD(md_fptr sink)
 {
-    exp->toMicroD(sink);
-    sink(";\n");
+	if(exp) {
+		exp->toMicroD(sink);
+		sink(";\n");
+	} else
+		sink("null"); // FIXME why are we here?
 }
 
 void IfStatement::toMicroD(md_fptr sink)
@@ -1933,9 +1969,12 @@ void callfunc(md_fptr sink, int directcall, Type *tret, Expression *ec, Type *ec
 
 		int done = 0;
             Expression *arg = (*arguments)[i];
-            size_t nparams = Parameter::dim(tf->parameters);
+            size_t nparams = 0;
+	    if(tf->parameters)
+		    nparams = Parameter::dim(tf->parameters);
             if (i - j < nparams && i >= j)
             {
+	    	assert(tf->parameters);
                 Parameter *p = Parameter::getNth(tf->parameters, i - j);
 
                 if (p->storageClass & (STCout | STCref)) {
@@ -1948,6 +1987,12 @@ void callfunc(md_fptr sink, int directcall, Type *tret, Expression *ec, Type *ec
 			sink(")");
 
 			done = 1;
+		}
+
+		if ((p->storageClass &(STClazy))) {
+			// FIXME
+			sink("null");
+			printf("LAZY: %s\n", p->toChars());
 		}
             }
 
