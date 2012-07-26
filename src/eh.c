@@ -55,7 +55,6 @@ symbol *except_gentables()
     assert(!usedalloca);
 
     symbol *s = symbol_generate(SCstatic,tsint);
-    s->Sseg = UNKNOWN;
     symbol_keep(s);
     symbol_debug(s);
 
@@ -63,7 +62,7 @@ symbol *except_gentables()
 
     outdata(s);                 // output the scope table
 
-    obj_ehtables(funcsym_p,funcsym_p->Ssize,s);
+    objmod->ehtables(funcsym_p,funcsym_p->Ssize,s);
 #endif
     return NULL;
 }
@@ -89,7 +88,7 @@ void except_fillInEHTable(symbol *s)
     dt_t **pdt = &s->Sdt;
 
     /*
-        void*           pointer to start of function
+        void*           pointer to start of function (Windows)
         unsigned        offset of ESP from EBP
         unsigned        offset from start of function to return code
         unsigned nguards;       // dimension of guard[] (Linux)
@@ -116,9 +115,12 @@ void except_fillInEHTable(symbol *s)
     int sz = 0;
 
     // Address of start of function
+#if OUREH
+#else
     symbol_debug(funcsym_p);
     pdt = dtxoff(pdt,funcsym_p,0,TYnptr);
     sz += fsize;
+#endif
 
     //printf("ehtables: func = %s, offset = x%x, startblock->Boffset = x%x\n", funcsym_p->Sident, funcsym_p->Soffset, startblock->Boffset);
 
@@ -196,6 +198,7 @@ void except_fillInEHTable(symbol *s)
 
             if (b->jcatchvar)                           // if try-catch
             {
+                assert(catchoffset);
                 pdt = dtdword(pdt,catchoffset);
                 pdt = dtsize_t(pdt,0);                  // no finally handler
 
@@ -210,7 +213,8 @@ void except_fillInEHTable(symbol *s)
                 // To successor of BC_finally block
                 bhandler = list_block(bhandler->Bsucc);
 #if OUREH
-                pdt = dtxoff(pdt,funcsym_p,bhandler->Boffset - startblock->Boffset, TYnptr);    // finally handler address
+                assert(bhandler->Boffset > startblock->Boffset);
+                pdt = dtsize_t(pdt,bhandler->Boffset - startblock->Boffset);    // finally handler offset
 #else
                 pdt = dtcoff(pdt,bhandler->Boffset);  // finally handler address
 #endif
@@ -244,7 +248,7 @@ void except_fillInEHTable(symbol *s)
             {
                 code *c2 = code_next(c);
                 if (config.flags2 & CFG2seh)
-                    c2->IEV2.Vsize_t = scopeindex;
+                    nteh_patchindex(c2, scopeindex);
 #if OUREH
                 pdt = dtdword(pdt,boffset - startblock->Boffset); // guard offset
 #endif
@@ -264,12 +268,13 @@ void except_fillInEHTable(symbol *s)
                             foffset = eoffset;
                             code *cf = code_next(c2);
                             if (config.flags2 & CFG2seh)
-                            {   cf->IEV2.Vsize_t = stack[stacki - 1];
+                            {
+                                nteh_patchindex(cf, stack[stacki - 1]);
                                 foffset += calccodsize(cf);
                                 cf = code_next(cf);
                             }
                             foffset += calccodsize(cf);
-                            while (cf->Iop != JMP && cf->Iop != JMPS)
+                            while (!cf->isJumpOP())
                             {
                                 cf = code_next(cf);
                                 foffset += calccodsize(cf);
@@ -293,7 +298,8 @@ void except_fillInEHTable(symbol *s)
                 pdt = dtdword(pdt,stack[stacki - 1]);   // parent index
                 pdt = dtdword(pdt,0);           // no catch offset
 #if OUREH
-                pdt = dtxoff(pdt,funcsym_p,foffset - startblock->Boffset, TYnptr);    // finally handler offset
+                assert(foffset > startblock->Boffset);
+                pdt = dtsize_t(pdt,foffset - startblock->Boffset);    // finally handler offset
 #else
                 pdt = dtcoff(pdt,foffset);  // finally handler address
 #endif
@@ -337,7 +343,8 @@ void except_fillInEHTable(symbol *s)
                 pdt = dtsize_t(pdt,cod3_bpoffset(b->jcatchvar));     // EBP offset
 
 #if OUREH
-                pdt = dtxoff(pdt,funcsym_p,bcatch->Boffset - startblock->Boffset, TYnptr);  // catch handler address
+                assert(bcatch->Boffset > startblock->Boffset);
+                pdt = dtsize_t(pdt,bcatch->Boffset - startblock->Boffset);  // catch handler offset
 #else
                 pdt = dtcoff(pdt,bcatch->Boffset);        // catch handler address
 #endif

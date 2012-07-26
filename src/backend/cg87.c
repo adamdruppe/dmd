@@ -1695,7 +1695,7 @@ code *load87(elem *e,unsigned eoffset,regm_t *pretregs,elem *eleft,int op)
                             c = loadea(e,&cs,0xDB,5,0,0,0);             // FLD var
                             break;
                         default:
-                            // __debug printf("ty = x%x\n", ty);
+                            printf("ty = x%x\n", ty);
                             assert(0);
                             break;
                     }
@@ -3011,7 +3011,7 @@ code *cnvt87(elem *e,regm_t *pretregs)
             if (szpush == REGSIZE)
                 c1 = gen1(c1,0x50 + AX);                // PUSH EAX
             else
-                c1 = genc2(c1,0x81,grex | modregrm(3,5,SP), szpush);   // SUB ESP,12
+                c1 = cod3_stackadj(c1, szpush);
             c1 = genfwait(c1);
             genc1(c1,0xD9,modregrm(2,7,4) + 256*modregrm(0,4,SP),FLconst,szoff); // FSTCW szoff[ESP]
 
@@ -3047,7 +3047,7 @@ code *cnvt87(elem *e,regm_t *pretregs)
             c2 = genpop(c2,reg);                           // POP reg
 
             if (szpush)
-                genc2(c2,0x81,grex | modregrm(3,0,SP), szpush);        // ADD ESP,4
+                cod3_stackadj(c2, -szpush);
             c2 = cat(c2,fixresult(e,retregs,pretregs));
         }
         else
@@ -3456,29 +3456,33 @@ code *fixresult_complex87(elem *e,regm_t retregs,regm_t *pretregs)
     else if ((tym == TYcfloat || tym == TYcdouble) &&
              *pretregs & (mXMM0|mXMM1) && retregs & mST01)
     {
+        unsigned xop = xmmload(tym == TYcfloat ? TYfloat : TYdouble);
+        unsigned mf = tym == TYcfloat ? MFfloat : MFdouble;
         if (*pretregs & mPSW && !(retregs & mPSW))
             c1 = genctst(c1,e,0);               // FTST
         pop87();
-        c1 = genfltreg(c1, ESC(MFdouble,1),3,0); // FSTP floatreg
+        c1 = genfltreg(c1, ESC(mf,1),3,0);      // FSTP floatreg
         genfwait(c1);
         c2 = getregs(mXMM0|mXMM1);
-        c2 = genfltreg(c2, 0xF20F10, XMM1 - XMM0, 0);    // MOVD XMM1,floatreg
+        c2 = genfltreg(c2, xop, XMM1 - XMM0, 0); // LODS(SD) XMM1,floatreg
 
         pop87();
-        c2 = genfltreg(c2, ESC(MFdouble,1),3,0); // FSTP floatreg
+        c2 = genfltreg(c2, ESC(mf,1),3,0);       // FSTP floatreg
         genfwait(c2);
-        c2 = genfltreg(c2, 0xF20F10, XMM0 - XMM0, 0);    // MOVD XMM0,floatreg
+        c2 = genfltreg(c2, xop, XMM0 - XMM0, 0); // MOVD XMM0,floatreg
     }
     else if ((tym == TYcfloat || tym == TYcdouble) &&
              retregs & (mXMM0|mXMM1) && *pretregs & mST01)
     {
+        unsigned xop = xmmstore(tym == TYcfloat ? TYfloat : TYdouble);
+        unsigned fop = tym == TYcfloat ? 0xD9 : 0xDD;
         c1 = push87();
-        c1 = genfltreg(c1, 0xF20F11, XMM0-XMM0, 0);        // MOVD floatreg, XMM0
-        genfltreg(c1, 0xDD, 0, 0);              // FLD double ptr floatreg
+        c1 = genfltreg(c1, xop, XMM0-XMM0, 0);  // STOS(SD) floatreg, XMM0
+        genfltreg(c1, fop, 0, 0);               // FLD double ptr floatreg
 
         c2 = push87();
-        c2 = genfltreg(c2, 0xF20F11, XMM1-XMM0, 0);        // MOV floatreg, XMM1
-        genfltreg(c2, 0xDD, 0, 0);              // FLD double ptr floatreg
+        c2 = genfltreg(c2, xop, XMM1-XMM0, 0);  // MOV floatreg, XMM1
+        genfltreg(c2, fop, 0, 0);               // FLD double ptr floatreg
 
         if (*pretregs & mPSW)
             c2 = genctst(c2,e,0);               // FTST

@@ -21,6 +21,7 @@
 #include        "type.h"
 #include        "go.h"
 #include        "ty.h"
+#include        "code.h"
 
 #include        "optab.c"
 #include        "tytab.c"
@@ -233,3 +234,4 @@ const char *regstring[32] = {"AX","CX","DX","BX","SP","BP","SI","DI",
 
 type *chartype;                 /* default 'char' type                  */
 
+Obj *objmod = NULL;

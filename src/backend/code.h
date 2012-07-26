@@ -496,7 +496,7 @@ struct code
       #define IEVllong2   IEV2.Vllong
     void print();               // pretty-printer
 
-    code() { Irex = 0; Isib = 0; }      // constructor
+    code() { next = NULL; Iflags = 0; Iop = 0; Iea = 0; IFL1 = 0; IFL2 = 0; }      // constructor
 
     void orReg(unsigned reg)
     {   if (reg & 8)
@@ -510,6 +510,8 @@ struct code
         Irm &= ~modregrm(0, 7, 0);
         orReg(reg);
     }
+
+    bool isJumpOP() { return Iop == JMP || Iop == JMPS; }
 };
 
 // !=0 if we have to add FWAIT to floating point ops
@@ -691,6 +693,9 @@ void useregs (regm_t regm );
 code *getregs (regm_t r );
 code *getregs_imm (regm_t r );
 code *cse_flush(int);
+bool cse_simple(code *c, elem *e);
+code* gen_testcse(code *c, unsigned sz, targ_uns i);
+code* gen_loadcse(code *c, unsigned reg, targ_uns i);
 void cssave (elem *e , regm_t regm , unsigned opsflag );
 bool evalinregister (elem *e );
 regm_t getscratch();
@@ -777,10 +782,16 @@ extern int BPoff;
 
 int cod3_EA(code *c);
 regm_t cod3_useBP();
+void cod3_initregs();
+void cod3_setdefault();
 void cod3_set32 (void );
 void cod3_set64 (void );
+void cod3_align_bytes (size_t nbytes);
 void cod3_align (void );
+code* cod3_stackadj(code* c, int nbytes);
 regm_t regmask(tym_t tym, tym_t tyf);
+void cgreg_dst_regs(unsigned *dst_integer_reg, unsigned *dst_float_reg);
+void cgreg_set_priorities(tym_t ty, char **pseq, char **pseqmsw);
 void outblkexitcode(block *bl, code*& c, int& anyspill, const char* sflsave, symbol** retsym, const regm_t mfuncregsave );
 void doswitch (block *b );
 void outjmptab (block *b );
@@ -813,6 +824,7 @@ void assignaddr (block *bl );
 void assignaddrc (code *c );
 targ_size_t cod3_bpoffset(symbol *s);
 void pinholeopt (code *c , block *bn );
+void simplify_code(code *c);
 void jmpaddr (code *c );
 int code_match(code *c1,code *c2);
 unsigned calcblksize (code *c);
@@ -823,6 +835,26 @@ void searchfixlist (symbol *s );
 void outfixlist (void );
 void code_hydrate(code **pc);
 void code_dehydrate(code **pc);
+
+extern int hasframe;            /* !=0 if this function has a stack frame */
+extern targ_size_t spoff;
+extern targ_size_t Foff;        // BP offset of floating register
+extern targ_size_t CSoff;       // offset of common sub expressions
+extern targ_size_t NDPoff;      // offset of saved 8087 registers
+extern int BPoff;                      // offset from BP
+extern int EBPtoESP;            // add to EBP offset to get ESP offset
+extern int AAoff;               // offset of alloca temporary
+
+code* prolog_ifunc(tym_t* tyf);
+code* prolog_ifunc2(tym_t tyf, tym_t tym, bool pushds);
+code* prolog_16bit_windows_farfunc(tym_t* tyf, bool* pushds);
+code* prolog_frame(unsigned farfunc, unsigned* xlocalsize, bool* enter);
+code* prolog_frameadj(tym_t tyf, unsigned xlocalsize, bool enter, bool* pushalloc);
+code* prolog_frameadj2(tym_t tyf, unsigned xlocalsize, bool* pushalloc);
+code* prolog_setupalloca();
+code* prolog_trace(bool farfunc, unsigned* regsaved);
+code* prolog_genvarargs(symbol* sv, regm_t* namedargs);
+code* prolog_loadparams(tym_t tyf, bool pushalloc, regm_t* namedargs);
 
 /* cod4.c */
 extern  const unsigned dblreg[];
@@ -924,6 +956,7 @@ code *nteh_gensindex(int);
 #define GENSINDEXSIZE 7
 code *nteh_monitor_prolog(Symbol *shandle);
 code *nteh_monitor_epilog(regm_t retregs);
+code *nteh_patchindex(code* c, int index);
 
 // cgen.c
 code *code_last(code *c);
@@ -972,15 +1005,21 @@ void cgsched_block(block *b);
 //      Generalize the Windows platform concept of CODE,DATA,UDATA,etc
 //      into multiple segments
 
-#if OMFOBJ
+struct Ledatarec;               // OMF
+struct linnum_data;             // Elf, Mach
 
-struct Ledatarec;
+
+typedef unsigned int IDXSTR;
+typedef unsigned int IDXSEC;
+typedef unsigned int IDXSYM;
 
 struct seg_data
 {
     int                  SDseg;         // index into SegData[]
     targ_size_t          SDoffset;      // starting offset for data
+    int                  SDalignment;   // power of 2
 
+#if OMFOBJ
     bool isfarseg;
     int segidx;                         // internal object file segment number
     int lnameidx;                       // lname idx of segment name
@@ -989,36 +1028,13 @@ struct seg_data
     targ_size_t origsize;               // original size
     long seek;                          // seek position in output file
     Ledatarec *ledata;                  // current one we're filling in
-};
-
-//extern  targ_size_t Coffset;
-
 #endif
 
-#if ELFOBJ || MACHOBJ
-
-typedef unsigned int IDXSTR;
-typedef unsigned int IDXSEC;
-typedef unsigned int IDXSYM;
-
-struct linnum_data
-{
-    const char *filename;
-    unsigned filenumber;        // corresponding file number for DW_LNS_set_file
-
-    unsigned linoff_count;
-    unsigned linoff_max;
-    unsigned (*linoff)[2];      // [0] = line number, [1] = offset
-};
-
-struct seg_data
-{
-    int                  SDseg;         // segment index into SegData[]
+#if 1 //ELFOBJ || MACHOBJ
     IDXSEC               SDshtidx;      // section header table index
-    targ_size_t          SDoffset;      // starting offset for data
     Outbuffer           *SDbuf;         // buffer to hold data
     Outbuffer           *SDrel;         // buffer to hold relocation info
-#if ELFOBJ
+#if 1 //ELFOBJ
     IDXSYM               SDsymidx;      // each section is in the symbol table
     IDXSEC               SDrelidx;      // section header for relocation info
     targ_size_t          SDrelmaxoff;   // maximum offset encountered
@@ -1035,8 +1051,22 @@ struct seg_data
     linnum_data         *SDlinnum_data; // array of line number / offset data
 
     int isCode();
+#endif
 };
 
+
+
+#if 1 //ELFOBJ || MACHOBJ
+
+struct linnum_data
+{
+    const char *filename;
+    unsigned filenumber;        // corresponding file number for DW_LNS_set_file
+
+    unsigned linoff_count;
+    unsigned linoff_max;
+    unsigned (*linoff)[2];      // [0] = line number, [1] = offset
+};
 
 #endif
 
@@ -1045,6 +1075,37 @@ extern seg_data **SegData;
 #define Doffset SegData[DATA]->SDoffset
 #define CDoffset SegData[CDATA]->SDoffset
 #define Coffset SegData[cseg]->SDoffset
+
+/**************************************************/
+
+/* Allocate registers to function parameters
+ */
+
+struct FuncParamRegs
+{
+    FuncParamRegs(tym_t tyf);
+
+    int alloc(type *t, tym_t ty, unsigned char *reg1, unsigned char *reg2);
+
+  private:
+    tym_t tyf;                  // type of function
+    int i;                      // ith parameter
+    int regcnt;                 // how many general purpose registers are allocated
+    int xmmcnt;                 // how many fp registers are allocated
+    size_t numintegerregs;      // number of gp registers that can be allocated
+    size_t numfloatregs;        // number of fp registers that can be allocated
+    const unsigned char* argregs;       // map to gp register
+    const unsigned char* floatregs;     // map to fp register
+};
+
+extern "C++" { extern const unsigned mask[32]; }
+
+inline regm_t Symbol::Spregm()
+{
+    /*assert(Sclass == SCfastpar);*/
+    return mask[Spreg] | (Spreg2 == NOREG ? 0 : mask[Spreg2]);
+}
+
 
 #if __cplusplus && TX86
 }

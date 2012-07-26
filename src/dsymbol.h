@@ -76,7 +76,7 @@ struct AA;
 #if TARGET_NET
 struct PragmaScope;
 #endif
-#if IN_GCC
+#ifdef IN_GCC
 union tree_node;
 typedef union tree_node TYPE;
 #else
@@ -132,7 +132,6 @@ struct Dsymbol : Object
     int isAnonymous();
     void error(Loc loc, const char *format, ...);
     void error(const char *format, ...);
-    void verror(Loc loc, const char *format, va_list ap);
     void checkDeprecated(Loc loc, Scope *sc);
     Module *getModule();
     Module *getAccessModule();

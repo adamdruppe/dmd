@@ -1,7 +1,7 @@
 
 /*
  * Copyright (c) 1992-1999 by Symantec
- * Copyright (c) 1999-2011 by Digital Mars
+ * Copyright (c) 1999-2012 by Digital Mars
  * All Rights Reserved
  * http://www.digitalmars.com
  * http://www.dsource.org/projects/dmd/browser/branches/dmd-1.x/src/iasm.c
@@ -22,9 +22,7 @@
 #include        <string.h>
 #include        <time.h>
 #include        <assert.h>
-#include        <setjmp.h>
 #if __DMC__
-#undef setjmp
 #include        <limits.h>
 #endif
 
@@ -52,6 +50,8 @@
 #include        "code.h"
 #include        "iasm.h"
 #include        "xmm.h"
+
+#if TX86
 
 // I32 isn't set correctly yet because this is the front end, and I32
 // is a backend flag
@@ -2141,7 +2141,7 @@ STATIC void asmerr(int errnum, ...)
     verror(asmstate.loc, format, ap);
     va_end(ap);
 
-    longjmp(asmstate.env,1);
+    throw &asmstate;
 }
 
 /*******************************
@@ -2154,7 +2154,7 @@ STATIC void asmerr(const char *format, ...)
     verror(asmstate.loc, format, ap);
     va_end(ap);
 
-    longjmp(asmstate.env,1);
+    throw &asmstate;
 }
 
 /*******************************
@@ -2285,7 +2285,7 @@ ILLEGAL_ADDRESS_ERROR:
                 error(asmstate.loc, "tuple index %u exceeds length %u", index, tup->objects->dim);
             else
             {
-                Object *o = tup->objects->tdata()[index];
+                Object *o = (*tup->objects)[index];
                 if (o->dyncast() == DYNCAST_DSYMBOL)
                 {   o1->s = (Dsymbol *)o;
                     return o1;
@@ -3654,7 +3654,7 @@ STATIC code *asm_db_parse(OP *pop)
             case TOKidentifier:
             {   Expression *e = new IdentifierExp(asmstate.loc, asmtok->ident);
                 e = e->semantic(asmstate.sc);
-                e = e->optimize(WANTvalue | WANTinterpret);
+                e = e->ctfeInterpret();
                 if (e->op == TOKint64)
                 {   dt.ul = e->toInteger();
                     goto L2;
@@ -3730,7 +3730,7 @@ int asm_getnum()
 
             e = new IdentifierExp(asmstate.loc, asmtok->ident);
             e = e->semantic(asmstate.sc);
-            e = e->optimize(WANTvalue | WANTinterpret);
+            e = e->ctfeInterpret();
             i = e->toInteger();
             v = (int) i;
             if (v != i)
@@ -4442,7 +4442,7 @@ STATIC OPND *asm_primary_exp()
                             }
                         }
                         e = e->semantic(asmstate.sc);
-                        e = e->optimize(WANTvalue | WANTinterpret);
+                        e = e->ctfeInterpret();
                         if (e->isConst())
                         {
                             if (e->type->isintegral())
@@ -4708,13 +4708,9 @@ Statement *AsmStatement::semantic(Scope *sc)
 
     asmtok = tokens;
     asm_token_trans(asmtok);
-    if (setjmp(asmstate.env))
-    {   asmtok = NULL;                  // skip rest of line
-        tok_value = TOKeof;
-        exit(EXIT_FAILURE);
-        goto AFTER_EMIT;
-    }
 
+    try
+    {
     switch (tok_value)
     {
         case ASMTKnaked:
@@ -4835,6 +4831,13 @@ Statement *AsmStatement::semantic(Scope *sc)
             asmerr(EM_opcode_exp, asmtok->toChars());   // assembler opcode expected
             break;
     }
+    }
+    catch (ASM_STATE *a)
+    {
+        asmtok = NULL;                  // skip rest of line
+        tok_value = TOKeof;
+        exit(EXIT_FAILURE);
+    }
 
 AFTER_EMIT:
     opnd_free(o1);
@@ -4847,4 +4850,14 @@ AFTER_EMIT:
     //return asmstate.bReturnax;
     return this;
 }
+
+#else
+
+Statement* AsmStatement::semantic(Scope *sc)
+{
+    assert(0);
+    return NULL;
+}
+
+#endif
 

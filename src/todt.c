@@ -190,6 +190,9 @@ dt_t *ArrayInitializer::toDt()
 {
     //printf("ArrayInitializer::toDt('%s')\n", toChars());
     Type *tb = type->toBasetype();
+    if (tb->ty == Tvector)
+        tb = ((TypeVector *)tb)->basetype;
+
     Type *tn = tb->nextOf()->toBasetype();
 
     Dts dts;
@@ -793,6 +796,11 @@ dt_t **VarExp::toDt(dt_t **pdt)
 dt_t **FuncExp::toDt(dt_t **pdt)
 {
     //printf("FuncExp::toDt() %d\n", op);
+    if (fd->tok == TOKreserved && type->ty == Tpointer)
+    {   // change to non-nested
+        fd->tok = TOKfunction;
+        fd->vthis = NULL;
+    }
     Symbol *s = fd->toSymbol();
     if (fd->isNested())
     {   error("non-constant nested delegate literal expression %s", toChars());
@@ -800,6 +808,24 @@ dt_t **FuncExp::toDt(dt_t **pdt)
     }
     fd->toObjFile(0);
     return dtxoff(pdt, s, 0, TYnptr);
+}
+
+dt_t **VectorExp::toDt(dt_t **pdt)
+{
+    //printf("VectorExp::toDt() %s\n", toChars());
+    for (unsigned i = 0; i < dim; i++)
+    {   Expression *elem;
+
+        if (e1->op == TOKarrayliteral)
+        {
+            ArrayLiteralExp *ea = (ArrayLiteralExp *)e1;
+            elem = (*ea->elements)[i];
+        }
+        else
+            elem = e1;
+        pdt = elem->toDt(pdt);
+    }
+    return pdt;
 }
 
 /* ================================================================= */

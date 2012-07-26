@@ -1,6 +1,6 @@
 
 // Compiler implementation of the D programming language
-// Copyright (c) 1999-2011 by Digital Mars
+// Copyright (c) 1999-2012 by Digital Mars
 // All Rights Reserved
 // written by Walter Bright
 // http://www.digitalmars.com
@@ -19,6 +19,7 @@
 #include "microd.h"
 
 struct Type;
+struct TypeVector;
 struct Scope;
 struct TupleDeclaration;
 struct VarDeclaration;
@@ -166,6 +167,11 @@ struct Expression : Object
     // Same as WANTvalue, but also expand variables as far as possible
     #define WANTexpand  8
 
+    // Entry point for CTFE.
+    // A compile-time result is required. Give an error if not possible
+    Expression *ctfeInterpret();
+
+    // Implementation of CTFE for this expression
     virtual Expression *interpret(InterState *istate, CtfeGoal goal = ctfeNeedRvalue);
 
     virtual int isConst();
@@ -383,7 +389,6 @@ struct StringExp : Expression
     StringExp(Loc loc, void *s, size_t len, unsigned char postfix);
     //Expression *syntaxCopy();
     int equals(Object *o);
-    char *toChars();
     Expression *semantic(Scope *sc);
     Expression *interpret(InterState *istate, CtfeGoal goal = ctfeNeedRvalue);
     size_t length();
@@ -677,7 +682,6 @@ struct FuncExp : Expression
     FuncLiteralDeclaration *fd;
     TemplateDeclaration *td;
     enum TOK tok;
-    Type *treq;
 
     FuncExp(Loc loc, FuncLiteralDeclaration *fd, TemplateDeclaration *td = NULL);
     Expression *syntaxCopy();
@@ -817,10 +821,11 @@ struct BinExp : Expression
     Expression *interpretCommon(InterState *istate, CtfeGoal goal,
         Expression *(*fp)(Type *, Expression *, Expression *));
     Expression *interpretCommon2(InterState *istate, CtfeGoal goal,
-        Expression *(*fp)(TOK, Type *, Expression *, Expression *));
+        Expression *(*fp)(Loc, TOK, Type *, Expression *, Expression *));
     Expression *interpretAssignCommon(InterState *istate, CtfeGoal goal,
         Expression *(*fp)(Type *, Expression *, Expression *), int post = 0);
-    Expression *arrayOp(Scope *sc);
+    Expression *interpretFourPointerRelation(InterState *istate, CtfeGoal goal);
+    virtual Expression *arrayOp(Scope *sc);
 
     Expression *doInline(InlineDoState *ids);
     Expression *inlineScan(InlineScanState *iss);
@@ -840,6 +845,7 @@ struct BinAssignExp : BinExp
     }
 
     Expression *semantic(Scope *sc);
+    Expression *arrayOp(Scope *sc);
 
     Expression *op_overload(Scope *sc);
 
@@ -1126,7 +1132,7 @@ struct CastExp : UnaExp
 
 struct VectorExp : UnaExp
 {
-    Type *to;
+    TypeVector *to;             // the target vector type before semantic()
     unsigned dim;               // number of elements in the vector
 
     VectorExp(Loc loc, Expression *e, Type *t);
@@ -1134,6 +1140,7 @@ struct VectorExp : UnaExp
     Expression *semantic(Scope *sc);
     void toCBuffer(OutBuffer *buf, HdrGenState *hgs);
     elem *toElem(IRState *irs);
+    dt_t **toDt(dt_t **pdt);
 };
 
 struct SliceExp : UnaExp
@@ -1240,6 +1247,7 @@ struct IndexExp : BinExp
     int modifiable;
 
     IndexExp(Loc loc, Expression *e1, Expression *e2);
+    Expression *syntaxCopy();
     Expression *semantic(Scope *sc);
     int isLvalue();
     Expression *toLvalue(Scope *sc, Expression *e);
@@ -1761,6 +1769,9 @@ Expression *Slice(Type *type, Expression *e1, Expression *lwr, Expression *upr);
 void sliceAssignArrayLiteralFromString(ArrayLiteralExp *existingAE, StringExp *newval, int firstIndex);
 void sliceAssignStringFromArrayLiteral(StringExp *existingSE, ArrayLiteralExp *newae, int firstIndex);
 void sliceAssignStringFromString(StringExp *existingSE, StringExp *newstr, int firstIndex);
+
+int sliceCmpStringWithString(StringExp *se1, StringExp *se2, size_t lo1, size_t lo2, size_t len);
+int sliceCmpStringWithArray(StringExp *se1, ArrayLiteralExp *ae2, size_t lo1, size_t lo2, size_t len);
 
 
 #endif /* DMD_EXPRESSION_H */

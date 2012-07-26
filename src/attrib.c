@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <assert.h>
+#include <string.h>                     // memcpy()
 
 #include "rmem.h"
 
@@ -29,7 +30,7 @@
  #include "frontend.net/pragma.h"
 #endif
 
-extern void obj_includelib(const char *name);
+extern bool obj_includelib(const char *name);
 void obj_startaddress(Symbol *s);
 
 
@@ -48,7 +49,7 @@ Dsymbols *AttribDeclaration::include(Scope *sc, ScopeDsymbol *sd)
 
 int AttribDeclaration::apply(Dsymbol_apply_ft_t fp, void *param)
 {
-    Dsymbols *d = include(NULL, NULL);
+    Dsymbols *d = include(scope, NULL);
 
     if (d)
     {
@@ -82,7 +83,7 @@ int AttribDeclaration::addMember(Scope *sc, ScopeDsymbol *sd, int memnum)
 
 void AttribDeclaration::setScopeNewSc(Scope *sc,
         StorageClass stc, enum LINK linkage, enum PROT protection, int explicitProtection,
-        unsigned structalign)
+        structalign_t structalign)
 {
     if (decl)
     {
@@ -117,7 +118,7 @@ void AttribDeclaration::setScopeNewSc(Scope *sc,
 
 void AttribDeclaration::semanticNewSc(Scope *sc,
         StorageClass stc, enum LINK linkage, enum PROT protection, int explicitProtection,
-        unsigned structalign)
+        structalign_t structalign)
 {
     if (decl)
     {
@@ -742,7 +743,10 @@ void AlignDeclaration::semantic(Scope *sc)
 
 void AlignDeclaration::toCBuffer(OutBuffer *buf, HdrGenState *hgs)
 {
-    buf->printf("align (%d)", salign);
+    if (salign == STRUCTALIGN_DEFAULT)
+        buf->printf("align");
+    else
+        buf->printf("align (%d)", salign);
     AttribDeclaration::toCBuffer(buf, hgs);
 }
 
@@ -920,7 +924,7 @@ void PragmaDeclaration::setScope(Scope *sc)
         {
             Expression *e = (*args)[0];
             e = e->semantic(sc);
-            e = e->optimize(WANTvalue | WANTinterpret);
+            e = e->ctfeInterpret();
             (*args)[0] = e;
             StringExp* se = e->toString();
             if (!se)
@@ -954,8 +958,8 @@ void PragmaDeclaration::semantic(Scope *sc)
                 Expression *e = (*args)[i];
 
                 e = e->semantic(sc);
-                if (e->op != TOKerror)
-                    e = e->optimize(WANTvalue | WANTinterpret);
+                if (e->op != TOKerror && e->op != TOKtype)
+                    e = e->ctfeInterpret();
                 if (e->op == TOKerror)
                 {   errorSupplemental(loc, "while evaluating pragma(msg, %s)", (*args)[i]->toChars());
                     return;
@@ -981,7 +985,7 @@ void PragmaDeclaration::semantic(Scope *sc)
             Expression *e = (*args)[0];
 
             e = e->semantic(sc);
-            e = e->optimize(WANTvalue | WANTinterpret);
+            e = e->ctfeInterpret();
             (*args)[0] = e;
             if (e->op == TOKerror)
                 goto Lnodecl;
@@ -999,7 +1003,7 @@ void PragmaDeclaration::semantic(Scope *sc)
         }
         goto Lnodecl;
     }
-#if IN_GCC
+#ifdef IN_GCC
     else if (ident == Id::GNU_asm)
     {
         if (! args || args->dim != 2)
@@ -1023,7 +1027,7 @@ void PragmaDeclaration::semantic(Scope *sc)
 
             e = (*args)[1];
             e = e->semantic(sc);
-            e = e->optimize(WANTvalue | WANTinterpret);
+            e = e->ctfeInterpret();
             e = e->toString();
             if (e && ((StringExp *)e)->sz == 1)
                 s = ((StringExp *)e);
@@ -1045,7 +1049,7 @@ void PragmaDeclaration::semantic(Scope *sc)
         {
             Expression *e = (*args)[0];
             e = e->semantic(sc);
-            e = e->optimize(WANTvalue | WANTinterpret);
+            e = e->ctfeInterpret();
             (*args)[0] = e;
             Dsymbol *sa = getDsymbol(e);
             if (!sa || !sa->isFuncDeclaration())
@@ -1072,7 +1076,7 @@ void PragmaDeclaration::semantic(Scope *sc)
                 {
                     Expression *e = (*args)[i];
                     e = e->semantic(sc);
-                    e = e->optimize(WANTvalue | WANTinterpret);
+                    e = e->ctfeInterpret();
                     if (i == 0)
                         printf(" (");
                     else
@@ -1140,21 +1144,19 @@ void PragmaDeclaration::toObjFile(int multiobj)
         char *name = (char *)mem.malloc(se->len + 1);
         memcpy(name, se->string, se->len);
         name[se->len] = 0;
-#if OMFOBJ
-        /* The OMF format allows library names to be inserted
-         * into the object file. The linker will then automatically
+
+        /* Embed the library names into the object file.
+         * The linker will then automatically
          * search that library, too.
          */
-        obj_includelib(name);
-#elif ELFOBJ || MACHOBJ
-        /* The format does not allow embedded library names,
-         * so instead append the library name to the list to be passed
-         * to the linker.
-         */
-        global.params.libfiles->push(name);
-#else
-        error("pragma lib not supported");
-#endif
+        if (!obj_includelib(name))
+        {
+            /* The format does not allow embedded library names,
+             * so instead append the library name to the list to be passed
+             * to the linker.
+             */
+            global.params.libfiles->push(name);
+        }
     }
 #if DMDV2
     else if (ident == Id::startaddress)
@@ -1242,9 +1244,9 @@ void ConditionalDeclaration::emitComment(Scope *sc)
 
 Dsymbols *ConditionalDeclaration::include(Scope *sc, ScopeDsymbol *sd)
 {
-    //printf("ConditionalDeclaration::include()\n");
+    //printf("ConditionalDeclaration::include(sc = %p) scope = %p\n", sc, scope);
     assert(condition);
-    return condition->include(sc, sd) ? decl : elsedecl;
+    return condition->include(scope ? scope : sc, sd) ? decl : elsedecl;
 }
 
 void ConditionalDeclaration::setScope(Scope *sc)
@@ -1404,6 +1406,26 @@ void StaticIfDeclaration::importAll(Scope *sc)
 void StaticIfDeclaration::setScope(Scope *sc)
 {
     // do not evaluate condition before semantic pass
+
+    // But do set the scope, in case we need it for forward referencing
+    Dsymbol::setScope(sc);
+
+    // Set the scopes for both the decl and elsedecl, as we don't know yet
+    // which will be selected, and the scope will be the same regardless
+    Dsymbols *d = decl;
+    for (int j = 0; j < 2; j++)
+    {
+        if (d)
+        {
+           for (size_t i = 0; i < d->dim; i++)
+           {
+               Dsymbol *s = (*d)[i];
+
+               s->setScope(sc);
+           }
+        }
+        d = elsedecl;
+    }
 }
 
 void StaticIfDeclaration::semantic(Scope *sc)
@@ -1434,6 +1456,8 @@ const char *StaticIfDeclaration::kind()
 
 
 /***************************** CompileDeclaration *****************************/
+
+// These are mixin declarations, like mixin("int x");
 
 CompileDeclaration::CompileDeclaration(Loc loc, Expression *exp)
     : AttribDeclaration(NULL)
@@ -1471,7 +1495,7 @@ void CompileDeclaration::compileIt(Scope *sc)
     //printf("CompileDeclaration::compileIt(loc = %d) %s\n", loc.linnum, exp->toChars());
     exp = exp->semantic(sc);
     exp = resolveProperties(sc, exp);
-    exp = exp->optimize(WANTvalue | WANTinterpret);
+    exp = exp->ctfeInterpret();
     StringExp *se = exp->toString();
     if (!se)
     {   exp->error("argument to mixin must be a string, not (%s)", exp->toChars());
@@ -1508,3 +1532,10 @@ void CompileDeclaration::toCBuffer(OutBuffer *buf, HdrGenState *hgs)
     buf->writestring(");");
     buf->writenl();
 }
+
+const char *CompileDeclaration::kind()
+{
+    return "mixin";
+}
+
+

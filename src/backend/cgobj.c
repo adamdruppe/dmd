@@ -303,7 +303,7 @@ struct Objstate
     char extdata[1024];
     int extdatai;
 
-    // For obj_far16thunk
+    // For Obj::far16thunk
     int code16segi;             // SegData[] index
     targ_size_t CODE16offset;
 
@@ -523,6 +523,30 @@ seg_data *getsegment()
 }
 
 
+/**************************
+ * Ouput read only data for data.
+ * Output:
+ *      *pseg   segment of that data
+ * Returns:
+ *      offset of that data
+ */
+
+int Obj::data_readonly(char *p, int len, int *pseg)
+{
+    targ_size_t oldoff = Doffset;
+    Obj::bytes(DATA,Doffset,len,p);
+    Doffset += len;
+    *pseg = DATA;
+    return oldoff;
+}
+
+int Obj::data_readonly(char *p, int len)
+{
+    int pseg;
+
+    return Obj::data_readonly(p, len, &pseg);
+}
+
 /******************************
  * Perform initialization that applies to all .obj output files.
  * Input:
@@ -530,8 +554,10 @@ seg_data *getsegment()
  *      csegname        code segment name (can be NULL)
  */
 
-void obj_init(Outbuffer *objbuf, const char *filename, const char *csegname)
+Obj *Obj::init(Outbuffer *objbuf, const char *filename, const char *csegname)
 {
+        Obj *mobj = new Obj();
+
         memset(&obj,0,sizeof(obj));
 
         obj.buf = objbuf;
@@ -614,24 +640,26 @@ void obj_init(Outbuffer *objbuf, const char *filename, const char *csegname)
             seg_count = DEBTYP;
         }
 
-        obj_theadr(filename);
+        Obj::theadr(filename);
         obj.modname = filename;
         if (!csegname || !*csegname)            // if no code seg name supplied
             obj.csegname = objmodtoseg(obj.modname);    // generate one
         else
             obj.csegname = mem_strdup(csegname);        // our own copy
         objheader(obj.csegname);
-        objseggrp(0,0,0,0);             // obj seg and grp info
+        Obj::segment_group(0,0,0,0);             // obj seg and grp info
         ledata_new(cseg,0);             // so ledata is never NULL
         if (config.fulltypes)           // if full typing information
             cv_init();                  // initialize debug output code
+
+        return mobj;
 }
 
 /**************************
  * Initialize the start of object output for this particular .obj file.
  */
 
-void obj_initfile(const char *filename,const char *csegname, const char *modname)
+void Obj::initfile(const char *filename,const char *csegname, const char *modname)
 {
 }
 
@@ -639,7 +667,7 @@ void obj_initfile(const char *filename,const char *csegname, const char *modname
  * Fixup and terminate object file.
  */
 
-void obj_termfile()
+void Obj::termfile()
 {
 }
 
@@ -647,9 +675,9 @@ void obj_termfile()
  * Terminate package.
  */
 
-void obj_term()
+void Obj::term()
 {
-        //printf("obj_term()\n");
+        //printf("Obj::term()\n");
         list_t dl;
         unsigned long size;
 
@@ -734,10 +762,10 @@ void obj_term()
 
         size = obj.buf->size();
         obj.buf->setsize(0);            // rewind file
-        obj_theadr(obj.modname);
+        Obj::theadr(obj.modname);
         objheader(obj.csegname);
         mem_free(obj.csegname);
-        objseggrp(SegData[CODE]->SDoffset,Doffset,0,SegData[UDATA]->SDoffset);  // do real sizes
+        Obj::segment_group(SegData[CODE]->SDoffset,SegData[DATA]->SDoffset,0,SegData[UDATA]->SDoffset);  // do real sizes
 
         // Update any out-of-date far segment sizes
         for (size_t i = 0; i <= seg_count; i++)
@@ -769,13 +797,13 @@ void obj_term()
  *      obj.mlinnum             LINNUM or LINSYM
  */
 
-void objlinnum(Srcpos srcpos,targ_size_t offset)
+void Obj::linnum(Srcpos srcpos,targ_size_t offset)
 {
     unsigned linnum = srcpos.Slinnum;
 
 #if 0
 #if MARS || SCPP
-    printf("objlinnum(cseg=%d, offset=0x%lx) ", cseg, offset);
+    printf("Obj::linnum(cseg=%d, offset=0x%lx) ", cseg, offset);
 #endif
     srcpos.print("");
 #endif
@@ -994,7 +1022,7 @@ STATIC void linnum_term()
 #if SCPP
         Sfile *filptr = ln->filptr;
         if (filptr != lastfilptr)
-        {   obj_theadr(filptr->SFname);
+        {   Obj::theadr(filptr->SFname);
             lastfilptr = filptr;
         }
 #endif
@@ -1003,7 +1031,7 @@ STATIC void linnum_term()
         if (filename != lastfilename)
         {
             if (filename)
-                obj_theadr(filename);
+                Obj::theadr(filename);
             lastfilename = filename;
         }
 #endif
@@ -1025,7 +1053,7 @@ STATIC void linnum_term()
                     offset = *(unsigned long *)&ln->data[u];
                 else
                     offset = *(unsigned short *)&ln->data[u];
-                objlinnum(srcpos,offset);
+                Obj::linnum(srcpos,offset);
                 u += intsize;
             }
             linnum_flush();
@@ -1058,7 +1086,7 @@ STATIC void linnum_term()
  * Set start address
  */
 
-void obj_startaddress(Symbol *s)
+void Obj::startaddress(Symbol *s)
 {
     obj.startaddress = s;
 }
@@ -1067,7 +1095,7 @@ void obj_startaddress(Symbol *s)
  * Output DOSSEG coment record.
  */
 
-void obj_dosseg()
+void Obj::dosseg()
 {   static const char dosseg[] = { 0x80,0x9E };
 
     objrecord(COMENT,dosseg,sizeof(dosseg));
@@ -1092,9 +1120,11 @@ STATIC void obj_comment(unsigned char x, const char *string, size_t len)
  * Output library name.
  * Output:
  *      name is modified
+ * Returns:
+ *      true if operation is supported
  */
 
-void obj_includelib(const char *name)
+bool Obj::includelib(const char *name)
 {   const char *p;
     size_t len = strlen(name);
 
@@ -1102,13 +1132,23 @@ void obj_includelib(const char *name)
     if (!filespeccmp(p,".lib"))
         len -= strlen(p);               // lop off .LIB extension
     obj_comment(0x9F, name, len);
+    return true;
+}
+
+/**********************************
+ * Do we allow zero sized objects?
+ */
+
+bool Obj::allowZeroSize()
+{
+    return false;
 }
 
 /**************************
  * Embed string in executable.
  */
 
-void obj_exestr(const char *p)
+void Obj::exestr(const char *p)
 {
     obj_comment(0xA4,p, strlen(p));
 }
@@ -1117,7 +1157,7 @@ void obj_exestr(const char *p)
  * Embed string in obj.
  */
 
-void obj_user(const char *p)
+void Obj::user(const char *p)
 {
     obj_comment(0xDF,p, strlen(p));
 }
@@ -1164,7 +1204,7 @@ STATIC void obj_defaultlib()
 
     if (!(config.flags2 & CFG2nodeflib))
     {
-        obj_includelib(configv.deflibname ? configv.deflibname : library);
+        Obj::includelib(configv.deflibname ? configv.deflibname : library);
     }
 }
 
@@ -1173,26 +1213,32 @@ STATIC void obj_defaultlib()
  * s1 is the weak extern, s2 is its default resolution.
  */
 
-void obj_wkext(Symbol *s1,Symbol *s2)
-{   char buffer[2+2+2];
-    int i;
-    int x2;
+void Obj::wkext(Symbol *s1,Symbol *s2)
+{
+    //printf("Obj::wkext(%s)\n", s1->Sident);
+    if (I32)
+    {
+        // Optlink crashes with weak symbols at EIP 41AFE7, 402000
+        return;
+    }
 
-    printf("obj_wkext(%s)\n", s1->Sident);
+    int x2;
     if (s2)
         x2 = s2->Sxtrnnum;
     else
     {
         if (!obj.nullext)
         {
-            obj.nullext = objextdef("__nullext");
+            obj.nullext = Obj::external_def("__nullext");
         }
         x2 = obj.nullext;
     }
     outextdata();
+
+    char buffer[2+2+2];
     buffer[0] = 0x80;
     buffer[1] = 0xA8;
-    i = 2;
+    int i = 2;
     i += insidx(&buffer[2],s1->Sxtrnnum);
     i += insidx(&buffer[i],x2);
     objrecord(COMENT,buffer,i);
@@ -1203,7 +1249,7 @@ void obj_wkext(Symbol *s1,Symbol *s2)
  * s1 is the lazy extern, s2 is its default resolution.
  */
 
-void obj_lzext(Symbol *s1,Symbol *s2)
+void Obj::lzext(Symbol *s1,Symbol *s2)
 {   char buffer[2+2+2];
     int i;
 
@@ -1220,7 +1266,7 @@ void obj_lzext(Symbol *s1,Symbol *s2)
  * Output an alias definition record.
  */
 
-void obj_alias(const char *n1,const char *n2)
+void Obj::alias(const char *n1,const char *n2)
 {   unsigned len;
     char *buffer;
 
@@ -1234,9 +1280,9 @@ void obj_alias(const char *n1,const char *n2)
  * Output module name record.
  */
 
-void obj_theadr(const char *modname)
+void Obj::theadr(const char *modname)
 {
-    //printf("obj_theadr(%s)\n", modname);
+    //printf("Obj::theadr(%s)\n", modname);
 
     // Convert to absolute file name, so debugger can find it anywhere
     char absname[260];
@@ -1262,7 +1308,7 @@ void obj_theadr(const char *modname)
  * Embed compiler version in .obj file.
  */
 
-void obj_compiler()
+void Obj::compiler()
 {
     static const char compiler[] = "\0\xDB" "Digital Mars C/C++"
         VERSION
@@ -1456,7 +1502,7 @@ STATIC void objsegdef(int attr,targ_size_t size,int segnamidx,int classnamidx)
  *      udatasize       size of uninitialized data segment
  */
 
-void objseggrp(targ_size_t codesize,targ_size_t datasize,
+void Obj::segment_group(targ_size_t codesize,targ_size_t datasize,
                 targ_size_t cdatasize,targ_size_t udatasize)
 {
     int dsegattr;
@@ -1470,15 +1516,17 @@ void objseggrp(targ_size_t codesize,targ_size_t datasize,
 
 #if MARS
     dsegattr = SEG_ATTR(SEG_ALIGN16,SEG_C_PUBLIC,0,USE32);
+    objsegdef(dsegattr,datasize,5,DATACLASS);   // [DATA]  seg _DATA, class DATA
+    objsegdef(dsegattr,cdatasize,7,7);          // [CDATA] seg CONST, class CONST
+    objsegdef(dsegattr,udatasize,8,9);          // [UDATA] seg _BSS,  class BSS
 #else
     dsegattr = I32
           ? SEG_ATTR(SEG_ALIGN4,SEG_C_PUBLIC,0,USE32)
           : SEG_ATTR(SEG_ALIGN2,SEG_C_PUBLIC,0,USE16);
-#endif
-
     objsegdef(dsegattr,datasize,5,DATACLASS);   // seg _DATA, class DATA
     objsegdef(dsegattr,cdatasize,7,7);          // seg CONST, class CONST
     objsegdef(dsegattr,udatasize,8,9);          // seg _BSS, class BSS
+#endif
 
     obj.lnameidx = 10;                          // next lname index
     obj.segidx = 5;                             // next segment index
@@ -1532,7 +1580,7 @@ void objseggrp(targ_size_t codesize,targ_size_t datasize,
  *              3:      compiler
  */
 
-void obj_staticctor(Symbol *s,int dtor,int seg)
+void Obj::staticctor(Symbol *s,int dtor,int seg)
 {
     // We need to always put out the segments in triples, so that the
     // linker will put them in the correct order.
@@ -1564,7 +1612,7 @@ void obj_staticctor(Symbol *s,int dtor,int seg)
         {
             seg_data *pseg = getsegment();
             pseg->segidx = obj.segidx;
-            reftoident(pseg->SDseg,0,s,0,0);     // put out function pointer
+            Obj::reftoident(pseg->SDseg,0,s,0,0);     // put out function pointer
         }
 
         obj.segidx++;
@@ -1602,7 +1650,7 @@ void obj_staticctor(Symbol *s,int dtor,int seg)
  * Used for static ctor and dtor lists.
  */
 
-void obj_funcptr(Symbol *s)
+void Obj::funcptr(Symbol *s)
 {
     // We need to always put out the segments in triples, so that the
     // linker will put them in the correct order.
@@ -1646,7 +1694,7 @@ void obj_funcptr(Symbol *s)
     objsegdef(dsegattr,(i & 2) + tysize[TYnptr],obj.lnameidx + 1,DATACLASS);
     seg_data *pseg = getsegment();
     pseg->segidx = obj.segidx;
-    reftoident(pseg->SDseg,0,s,0,0);     // put out function pointer
+    Obj::reftoident(pseg->SDseg,0,s,0,0);     // put out function pointer
     obj.segidx++;
 
     // Put out ending segment
@@ -1663,7 +1711,7 @@ void obj_funcptr(Symbol *s)
  * Used for static ctor and dtor lists.
  */
 
-void obj_ehtables(Symbol *sfunc,targ_size_t size,Symbol *ehsym)
+void Obj::ehtables(Symbol *sfunc,targ_size_t size,Symbol *ehsym)
 {
     // We need to always put out the segments in triples, so that the
     // linker will put them in the correct order.
@@ -1703,9 +1751,9 @@ void obj_ehtables(Symbol *sfunc,targ_size_t size,Symbol *ehsym)
         obj.segidx += 2;
     }
     offset = SegData[obj.fisegi]->SDoffset;
-    offset += reftoident(obj.fisegi,offset,sfunc,0,LARGECODE ? CFoff | CFseg : CFoff);   // put out function pointer
-    offset += reftoident(obj.fisegi,offset,ehsym,0,0);   // pointer to data
-    obj_bytes(obj.fisegi,offset,intsize,&size);          // size of function
+    offset += Obj::reftoident(obj.fisegi,offset,sfunc,0,LARGECODE ? CFoff | CFseg : CFoff);   // put out function pointer
+    offset += Obj::reftoident(obj.fisegi,offset,ehsym,0,0);   // pointer to data
+    Obj::bytes(obj.fisegi,offset,intsize,&size);          // size of function
     SegData[obj.fisegi]->SDoffset = offset + intsize;
 }
 
@@ -1716,7 +1764,7 @@ void obj_ehtables(Symbol *sfunc,targ_size_t size,Symbol *ehsym)
 
 #if MARS
 
-void obj_moduleinfo(Symbol *scc)
+void Obj::moduleinfo(Symbol *scc)
 {
     // We need to always put out the segments in triples, so that the
     // linker will put them in the correct order.
@@ -1754,7 +1802,7 @@ void obj_moduleinfo(Symbol *scc)
     }
 
     targ_size_t offset = SegData[obj.fmsegi]->SDoffset;
-    offset += reftoident(obj.fmsegi,offset,scc,0,LARGECODE ? CFoff | CFseg : CFoff);     // put out function pointer
+    offset += Obj::reftoident(obj.fmsegi,offset,scc,0,LARGECODE ? CFoff | CFseg : CFoff);     // put out function pointer
     SegData[obj.fmsegi]->SDoffset = offset;
 }
 
@@ -1771,7 +1819,12 @@ void obj_moduleinfo(Symbol *scc)
  *      distinguish it from regular segments).
  */
 
-int obj_comdat(Symbol *s)
+int Obj::comdatsize(Symbol *s, targ_size_t symsize)
+{
+    return Obj::comdat(s);
+}
+
+int Obj::comdat(Symbol *s)
 {   char lnames[IDMAX+IDOHD+1]; // +1 to allow room for strcpy() terminating 0
     char cextdef[2+2];
     char __ss *p;
@@ -1785,7 +1838,7 @@ int obj_comdat(Symbol *s)
     isfunc = tyfunc(ty) != 0;
 
     // Put out LNAME for name of Symbol
-    lnamesize = obj_mangle(s,lnames);
+    lnamesize = Obj::mangle(s,lnames);
     objrecord((s->Sclass == SCstatic ? LLNAMES : LNAMES),lnames,lnamesize);
 
     // Put out CEXTDEF for name of Symbol
@@ -1836,7 +1889,7 @@ int obj_comdat(Symbol *s)
 
             case mTYfar:        atyp = 0x12;    break;
 #endif
-            case mTYthread:     lr->pubbase = obj_tlsseg()->segidx;
+            case mTYthread:     lr->pubbase = Obj::tlsseg()->segidx;
                                 atyp = 0x10;    // pick any (also means it is
                                                 // not searched for in a library)
                                 break;
@@ -1847,6 +1900,7 @@ int obj_comdat(Symbol *s)
     }
     if (s->Sclass == SCstatic)
         lr->flags |= 0x04;      // local bit (make it an "LCOMDAT")
+    s->Soffset = 0;
     return pseg->SDseg;
 }
 
@@ -1855,11 +1909,10 @@ int obj_comdat(Symbol *s)
  * Used after a COMDAT for a function is done.
  */
 
-void obj_setcodeseg(int seg,targ_size_t offset)
+void Obj::setcodeseg(int seg)
 {
     assert(0 < seg && seg <= seg_count);
     cseg = seg;
-    Coffset = offset;
 }
 
 /********************************
@@ -1875,7 +1928,7 @@ void obj_setcodeseg(int seg,targ_size_t offset)
  *      segment index of newly created code segment
  */
 
-int obj_codeseg(char *name,int suffix)
+int Obj::codeseg(char *name,int suffix)
 {
     if (!name)
     {
@@ -1916,9 +1969,9 @@ int obj_codeseg(char *name,int suffix)
  *      segment for TLS segment
  */
 
-seg_data *obj_tlsseg_bss() { return obj_tlsseg(); }
+seg_data *Obj::tlsseg_bss() { return Obj::tlsseg(); }
 
-seg_data *obj_tlsseg()
+seg_data *Obj::tlsseg()
 {   //static char tlssegname[] = "\04$TLS\04$TLS";
     //static char tlssegname[] = "\05.tls$\03tls";
     static const char tlssegname[] = "\05.tls$\03tls\04.tls\010.tls$ZZZ";
@@ -1966,7 +2019,7 @@ seg_data *obj_tlsseg()
  *      *poffset start of the data for the far data segment
  */
 
-int obj_fardata(char *name,targ_size_t size,targ_size_t *poffset)
+int Obj::fardata(char *name,targ_size_t size,targ_size_t *poffset)
 {
     static char fardataclass[] = "\010FAR_DATA";
     int len;
@@ -2044,7 +2097,7 @@ STATIC int obj_newfarseg(targ_size_t size,int classidx)
  * Convert reference to imported name.
  */
 
-void obj_import(elem *e)
+void Obj::import(elem *e)
 {
 #if MARS
     assert(0);
@@ -2063,7 +2116,7 @@ void obj_import(elem *e)
         char buffer[IDMAX + IDOHD + 1];
 
         // Create import name
-        len = obj_mangle(s,buffer);
+        len = Obj::mangle(s,buffer);
         if (buffer[0] == (char)0xFF && buffer[1] == 0)
         {   name = buffer + 4;
             len -= 4;
@@ -2119,13 +2172,13 @@ void obj_import(elem *e)
  *      length of mangled name
  */
 
-size_t obj_mangle(Symbol *s,char *dest)
+size_t Obj::mangle(Symbol *s,char *dest)
 {   size_t len;
     size_t ilen;
     char *name;
     char *name2 = NULL;
 
-    //printf("obj_mangle('%s'), mangle = x%x\n",s->Sident,type_mangle(s->Stype));
+    //printf("Obj::mangle('%s'), mangle = x%x\n",s->Sident,type_mangle(s->Stype));
 #if SCPP
     name = CPP ? cpp_mangle(s) : s->Sident;
 #elif MARS
@@ -2264,12 +2317,12 @@ size_t obj_mangle(Symbol *s,char *dest)
  * Export a function name.
  */
 
-void obj_export(Symbol *s,unsigned argsize)
+void Obj::export_symbol(Symbol *s,unsigned argsize)
 {   char *coment;
     size_t len;
 
     coment = (char *) alloca(4 + 1 + (IDMAX + IDOHD) + 1); // allow extra byte for mangling
-    len = obj_mangle(s,&coment[4]);
+    len = Obj::mangle(s,&coment[4]);
     assert(len <= IDMAX + IDOHD);
     coment[1] = 0xA0;                           // comment class
     coment[2] = 2;                              // why??? who knows
@@ -2293,10 +2346,10 @@ void obj_export(Symbol *s,unsigned argsize)
  *      actual seg
  */
 
-int elf_data_start(Symbol *sdata, targ_size_t datasize, int seg)
+int Obj::data_start(Symbol *sdata, targ_size_t datasize, int seg)
 {
     targ_size_t alignbytes;
-    //printf("elf_data_start(%s,size %llx,seg %d)\n",sdata->Sident,datasize,seg);
+    //printf("Obj::data_start(%s,size %llx,seg %d)\n",sdata->Sident,datasize,seg);
     //symbol_print(sdata);
 
     if (sdata->Sseg == UNKNOWN) // if we don't know then there
@@ -2304,11 +2357,32 @@ int elf_data_start(Symbol *sdata, targ_size_t datasize, int seg)
     else
         seg = sdata->Sseg;
     targ_size_t offset = SegData[seg]->SDoffset;
-    alignbytes = align(datasize, offset) - offset;
-    if (alignbytes)
-        obj_lidata(seg, offset, alignbytes);
+    if (sdata->Salignment > 0)
+    {   if (SegData[seg]->SDalignment < sdata->Salignment)
+            SegData[seg]->SDalignment = sdata->Salignment;
+        alignbytes = (offset + sdata->Salignment - 1) & ~(sdata->Salignment - 1);
+    }
+    else
+        alignbytes = align(datasize, offset) - offset;
     sdata->Soffset = offset + alignbytes;
+    SegData[seg]->SDoffset = sdata->Soffset;
     return seg;
+}
+
+void Obj::func_start(Symbol *sfunc)
+{
+    //printf("Obj::func_start(%s)\n",sfunc->Sident);
+    symbol_debug(sfunc);
+    sfunc->Sseg = cseg;             // current code seg
+    sfunc->Soffset = Coffset;       // offset of start of function
+}
+
+/*******************************
+ * Update function info after codgen
+ */
+
+void Obj::func_term(Symbol *sfunc)
+{
 }
 
 /********************************
@@ -2327,7 +2401,7 @@ STATIC void outpubdata()
     }
 }
 
-void objpubdef(int seg,Symbol *s,targ_size_t offset)
+void Obj::pubdef(int seg,Symbol *s,targ_size_t offset)
 {   unsigned reclen,len;
     char *p;
     unsigned ti;
@@ -2342,7 +2416,7 @@ void objpubdef(int seg,Symbol *s,targ_size_t offset)
         obj.pubdatai += 1 + insidx(obj.pubdata + 1,idx);        // segment index
     }
     p = &obj.pubdata[obj.pubdatai];
-    len = obj_mangle(s,p);              // mangle in name
+    len = Obj::mangle(s,p);              // mangle in name
     reclen = len + intsize;
     p += len;
     TOOFFSET(p,offset);
@@ -2350,6 +2424,11 @@ void objpubdef(int seg,Symbol *s,targ_size_t offset)
     ti = (config.fulltypes == CVOLD) ? cv_typidx(s->Stype) : 0;
     reclen += instypidx(p,ti);
     obj.pubdatai += reclen;
+}
+
+void Obj::pubdefsize(int seg, Symbol *s, targ_size_t offset, targ_size_t symsize)
+{
+    Obj::pubdef(seg, s, offset);
 }
 
 /*******************************
@@ -2368,11 +2447,11 @@ STATIC void outextdata()
     }
 }
 
-int objextdef(const char *name)
+int Obj::external_def(const char *name)
 {   unsigned len;
     char *e;
 
-    //dbg_printf("objextdef('%s')\n",name);
+    //dbg_printf("Obj::external_def('%s')\n",name);
     assert(name);
     len = strlen(name);                 // length of identifier
     if (obj.extdatai + len + ONS_OHD + 1 > sizeof(obj.extdata))
@@ -2394,15 +2473,15 @@ int objextdef(const char *name)
  *      External index of the definition (1,2,...)
  */
 
-int objextern(Symbol *s)
+int Obj::external(Symbol *s)
 {
-    //dbg_printf("objextern('%s')\n",s->Sident);
+    //dbg_printf("Obj::external('%s')\n",s->Sident);
     symbol_debug(s);
     if (obj.extdatai + (IDMAX + IDOHD) + 3 > sizeof(obj.extdata))
         outextdata();
 
     char *e = &obj.extdata[obj.extdatai];
-    unsigned len = obj_mangle(s,e);
+    unsigned len = Obj::mangle(s,e);
     e[len] = 0;                 // typidx = 0
     obj.extdatai += len + 1;
     s->Sxtrnnum = ++obj.extidx;
@@ -2421,7 +2500,7 @@ int objextern(Symbol *s)
  *      External index of the definition (1,2,...)
  */
 
-// Helper for obj_comdef()
+// Helper for Obj::common_block()
 
 static unsigned storelength(unsigned long length,unsigned i)
 {
@@ -2452,14 +2531,14 @@ static unsigned storelength(unsigned long length,unsigned i)
     return i + 1;               // index past where we stuffed length
 }
 
-int obj_comdef(Symbol *s,int flag,targ_size_t size,targ_size_t count)
+int Obj::common_block(Symbol *s,int flag,targ_size_t size,targ_size_t count)
 { register unsigned i;
   unsigned long length;
   unsigned ti;
 
-    //dbg_printf("obj_comdef('%s',%d,%d,%d)\n",s->Sident,flag,size,count);
+    //dbg_printf("Obj::common_block('%s',%d,%d,%d)\n",s->Sident,flag,size,count);
     outextdata();               // borrow the extdata[] storage
-    i = obj_mangle(s,obj.extdata);
+    i = Obj::mangle(s,obj.extdata);
 
     ti = (config.fulltypes == CVOLD) ? cv_typidx(s->Stype) : 0;
     i += instypidx(obj.extdata + i,ti);
@@ -2489,9 +2568,9 @@ int obj_comdef(Symbol *s,int flag,targ_size_t size,targ_size_t count)
  * (uninitialized data only)
  */
 
-void obj_write_zeros(seg_data *pseg, targ_size_t count)
+void Obj::write_zeros(seg_data *pseg, targ_size_t count)
 {
-    obj_lidata(pseg->SDseg, pseg->SDoffset, count);
+    Obj::lidata(pseg->SDseg, pseg->SDoffset, count);
     //pseg->SDoffset += count;
 }
 
@@ -2500,14 +2579,14 @@ void obj_write_zeros(seg_data *pseg, targ_size_t count)
  * (uninitialized data only)
  */
 
-void obj_lidata(int seg,targ_size_t offset,targ_size_t count)
+void Obj::lidata(int seg,targ_size_t offset,targ_size_t count)
 {   int i;
     unsigned reclen;
     static char zero[20];
     char data[20];
     char __ss *di;
 
-    //printf("obj_lidata(seg = %d, offset = x%x, count = %d)\n", seg, offset, count);
+    //printf("Obj::lidata(seg = %d, offset = x%x, count = %d)\n", seg, offset, count);
 
     SegData[seg]->SDoffset += count;
 
@@ -2518,7 +2597,7 @@ void obj_lidata(int seg,targ_size_t offset,targ_size_t count)
 Lagain:
     if (count <= sizeof(zero))          // if shorter to use ledata
     {
-        obj_bytes(seg,offset,count,zero);
+        Obj::bytes(seg,offset,count,zero);
         return;
     }
 
@@ -2526,11 +2605,11 @@ Lagain:
     {
         while (count > sizeof(zero))
         {
-            obj_bytes(seg,offset,sizeof(zero),zero);
+            Obj::bytes(seg,offset,sizeof(zero),zero);
             offset += sizeof(zero);
             count -= sizeof(zero);
         }
-        obj_bytes(seg,offset,count,zero);
+        Obj::bytes(seg,offset,count,zero);
         return;
     }
 
@@ -2591,7 +2670,7 @@ STATIC void obj_modend()
         Symbol *s = obj.startaddress;
 
         // Turn startaddress into a fixup.
-        // Borrow heavilly from reftoident()
+        // Borrow heavilly from Obj::reftoident()
 
         symbol_debug(s);
         offset = 0;
@@ -2609,7 +2688,7 @@ STATIC void obj_modend()
                 {
                  Ladd:
                     s->Sclass = SCextern;
-                    external = objextern(s);
+                    external = Obj::external(s);
                     outextdata();
                 }
                 break;
@@ -2723,7 +2802,7 @@ STATIC void obj_modend()
     else
     {   static const char modend[] = {0};
 
-        objrecord(MODEND,modend,sizeof(modend));
+        objrecord(obj.mmodend,modend,sizeof(modend));
     }
 }
 
@@ -2874,9 +2953,9 @@ STATIC Ledatarec *ledata_new(int seg,targ_size_t offset)
  * Append byte to segment.
  */
 
-void obj_write_byte(seg_data *pseg, unsigned byte)
+void Obj::write_byte(seg_data *pseg, unsigned byte)
 {
-    obj_byte(pseg->SDseg, pseg->SDoffset, byte);
+    Obj::byte(pseg->SDseg, pseg->SDoffset, byte);
     pseg->SDoffset++;
 }
 
@@ -2884,7 +2963,7 @@ void obj_write_byte(seg_data *pseg, unsigned byte)
  * Output byte to object file.
  */
 
-void obj_byte(int seg,targ_size_t offset,unsigned byte)
+void Obj::byte(int seg,targ_size_t offset,unsigned byte)
 {   unsigned i;
 
     Ledatarec *lr = SegData[seg]->ledata;
@@ -2925,9 +3004,9 @@ L1:     ;
  * Append bytes to segment.
  */
 
-void obj_write_bytes(seg_data *pseg, unsigned nbytes, void *p)
+void Obj::write_bytes(seg_data *pseg, unsigned nbytes, void *p)
 {
-    obj_bytes(pseg->SDseg, pseg->SDoffset, nbytes, p);
+    Obj::bytes(pseg->SDseg, pseg->SDoffset, nbytes, p);
     pseg->SDoffset += nbytes;
 }
 
@@ -2937,10 +3016,10 @@ void obj_write_bytes(seg_data *pseg, unsigned nbytes, void *p)
  *      nbytes
  */
 
-unsigned obj_bytes(int seg,targ_size_t offset,unsigned nbytes, void *p)
+unsigned Obj::bytes(int seg,targ_size_t offset,unsigned nbytes, void *p)
 {   unsigned n = nbytes;
 
-    //dbg_printf("obj_bytes(seg=%d, offset=x%lx, nbytes=x%x, p=%p)\n",seg,offset,nbytes,p);
+    //dbg_printf("Obj::bytes(seg=%d, offset=x%lx, nbytes=x%x, p=%p)\n",seg,offset,nbytes,p);
     Ledatarec *lr = SegData[seg]->ledata;
     if (!lr)
         lr = ledata_new(seg, offset);
@@ -2952,7 +3031,7 @@ unsigned obj_bytes(int seg,targ_size_t offset,unsigned nbytes, void *p)
      )
     {
         while (nbytes)
-        {   obj_byte(seg,offset,*(char *)p);
+        {   Obj::byte(seg,offset,*(char *)p);
             offset++;
             p = ((char *)p) + 1;
             nbytes--;
@@ -2985,7 +3064,7 @@ unsigned obj_bytes(int seg,targ_size_t offset,unsigned nbytes, void *p)
  *              idx2 = target datum
  */
 
-void objledata(int seg,targ_size_t offset,targ_size_t data,
+void Obj::ledata(int seg,targ_size_t offset,targ_size_t data,
         unsigned lcfd,unsigned idx1,unsigned idx2)
 {   unsigned i;
     unsigned size;                      // number of bytes to output
@@ -3061,7 +3140,7 @@ L1:     ;
  *              idx2 = target datum
  */
 
-void obj_long(int seg,targ_size_t offset,unsigned long data,
+void Obj::write_long(int seg,targ_size_t offset,unsigned long data,
         unsigned lcfd,unsigned idx1,unsigned idx2)
 {
 #if TARGET_SEGMENTED
@@ -3098,10 +3177,10 @@ void obj_long(int seg,targ_size_t offset,unsigned long data,
  * Example:
  *      int *abc = &def[3];
  *      to allocate storage:
- *              reftodatseg(DATA,offset,3 * sizeof(int *),UDATA);
+ *              Obj::reftodatseg(DATA,offset,3 * sizeof(int *),UDATA);
  */
 
-void reftodatseg(int seg,targ_size_t offset,targ_size_t val,
+void Obj::reftodatseg(int seg,targ_size_t offset,targ_size_t val,
         unsigned targetdatum,int flags)
 {
     assert(flags);
@@ -3109,7 +3188,7 @@ void reftodatseg(int seg,targ_size_t offset,targ_size_t val,
     if (flags == 0 || flags & CFoff)
     {
         // The frame datum is always 1, which is DGROUP
-        objledata(seg,offset,val,
+        Obj::ledata(seg,offset,val,
             LOCATsegrel | obj.LOCoffset | FD_F1 | FD_T4,DGROUPIDX,SegData[targetdatum]->segidx);
         offset += intsize;
     }
@@ -3120,7 +3199,7 @@ void reftodatseg(int seg,targ_size_t offset,targ_size_t val,
         if (config.wflags & WFdsnedgroup)
             warerr(WM_ds_ne_dgroup);
 #endif
-        objledata(seg,offset,0,
+        Obj::ledata(seg,offset,0,
             LOCATsegrel | LOCbase | FD_F1 | FD_T5,DGROUPIDX,DGROUPIDX);
     }
 }
@@ -3135,7 +3214,7 @@ void reftodatseg(int seg,targ_size_t offset,targ_size_t val,
  *      flags =         CFoff, CFseg
  */
 
-void reftofarseg(int seg,targ_size_t offset,targ_size_t val,
+void Obj::reftofarseg(int seg,targ_size_t offset,targ_size_t val,
         int farseg,int flags)
 {
     assert(flags);
@@ -3143,14 +3222,14 @@ void reftofarseg(int seg,targ_size_t offset,targ_size_t val,
     int idx = SegData[farseg]->segidx;
     if (flags == 0 || flags & CFoff)
     {
-        objledata(seg,offset,val,
+        Obj::ledata(seg,offset,val,
             LOCATsegrel | obj.LOCoffset | FD_F0 | FD_T4,idx,idx);
         offset += intsize;
     }
 
     if (flags & CFseg)
     {
-        objledata(seg,offset,0,
+        Obj::ledata(seg,offset,0,
             LOCATsegrel | LOCbase | FD_F0 | FD_T4,idx,idx);
     }
 }
@@ -3165,7 +3244,7 @@ void reftofarseg(int seg,targ_size_t offset,targ_size_t val,
  *      val =           displacement from start of this module
  */
 
-void reftocodseg(int seg,targ_size_t offset,targ_size_t val)
+void Obj::reftocodeseg(int seg,targ_size_t offset,targ_size_t val)
 {   unsigned framedatum;
     unsigned lcfd;
 
@@ -3184,7 +3263,7 @@ void reftocodseg(int seg,targ_size_t offset,targ_size_t val)
         lcfd = (LOCATsegrel | obj.LOCoffset) | (FD_F0 | FD_T4);
     }
 
-    objledata(seg,offset,val,lcfd,framedatum,idx);
+    Obj::ledata(seg,offset,val,lcfd,framedatum,idx);
 }
 
 /*******************************
@@ -3203,10 +3282,10 @@ void reftocodseg(int seg,targ_size_t offset,targ_size_t val)
  *      extern int def[];
  *      int *abc = &def[3];
  *      to allocate storage:
- *              reftodatseg(DATA,offset,3 * sizeof(int *),UDATA);
+ *              Obj::reftodatseg(DATA,offset,3 * sizeof(int *),UDATA);
  */
 
-int reftoident(int seg,targ_size_t offset,Symbol *s,targ_size_t val,
+int Obj::reftoident(int seg,targ_size_t offset,Symbol *s,targ_size_t val,
         int flags)
 {
     unsigned targetdatum;       // which datum the symbol is in
@@ -3217,7 +3296,7 @@ int reftoident(int seg,targ_size_t offset,Symbol *s,targ_size_t val,
     tym_t ty;
 
 #if 0
-    printf("reftoident('%s' seg %d, offset x%lx, val x%lx, flags x%x)\n",
+    printf("Obj::reftoident('%s' seg %d, offset x%lx, val x%lx, flags x%x)\n",
         s->Sident,seg,offset,val,flags);
     printf("Sseg = %d, Sxtrnnum = %d\n",s->Sseg,s->Sxtrnnum);
     symbol_print(s);
@@ -3405,7 +3484,7 @@ int reftoident(int seg,targ_size_t offset,Symbol *s,targ_size_t val,
         }
     }
 
-    objledata(seg,offset,val,lc,framedatum,targetdatum);
+    Obj::ledata(seg,offset,val,lc,framedatum,targetdatum);
     return numbytes;
 }
 
@@ -3415,7 +3494,7 @@ int reftoident(int seg,targ_size_t offset,Symbol *s,targ_size_t val,
  *      s       Symbol to generate a thunk for
  */
 
-void obj_far16thunk(Symbol *s)
+void Obj::far16thunk(Symbol *s)
 {
     static unsigned char cod32_1[] =
     {
@@ -3513,25 +3592,25 @@ void obj_far16thunk(Symbol *s)
     //------------------------------------------
     // Output the 32 bit thunk
 
-    obj_bytes(cseg,Coffset,sizeof(cod32_1),cod32_1);
+    Obj::bytes(cseg,Coffset,sizeof(cod32_1),cod32_1);
     Coffset += sizeof(cod32_1);
 
     // Put out fixup for SEG FLAT:_DATA
-    objledata(cseg,Coffset,0,LOCATsegrel|LOCbase|FD_F1|FD_T4,
+    Obj::ledata(cseg,Coffset,0,LOCATsegrel|LOCbase|FD_F1|FD_T4,
         DGROUPIDX,DATA);
     Coffset += 2;
 
-    obj_bytes(cseg,Coffset,sizeof(cod32_2),cod32_2);
+    Obj::bytes(cseg,Coffset,sizeof(cod32_2),cod32_2);
     Coffset += sizeof(cod32_2);
 
     // Put out fixup to CODE16 part of thunk
-    objledata(cseg,Coffset,obj.CODE16offset,LOCATsegrel|LOC16pointer|FD_F0|FD_T4,
+    Obj::ledata(cseg,Coffset,obj.CODE16offset,LOCATsegrel|LOC16pointer|FD_F0|FD_T4,
         SegData[obj.code16segi]->segidx,
         SegData[obj.code16segi]->segidx);
     Coffset += 4;
 
     L2offset = Coffset;
-    obj_bytes(cseg,Coffset,sizeof(cod32_3),cod32_3);
+    Obj::bytes(cseg,Coffset,sizeof(cod32_3),cod32_3);
     Coffset += sizeof(cod32_3);
 
     s->Ssize = Coffset - s->Soffset;            // size of thunk
@@ -3539,20 +3618,20 @@ void obj_far16thunk(Symbol *s)
     //------------------------------------------
     // Output the 16 bit thunk
 
-    obj_byte(obj.code16segi,obj.CODE16offset++,0x9A);       //      CALLF   function
+    Obj::byte(obj.code16segi,obj.CODE16offset++,0x9A);       //      CALLF   function
 
     // Make function external
-    idx = objextern(s);                         // use Pascal name mangling
+    idx = Obj::external(s);                         // use Pascal name mangling
 
     // Output fixup for function
-    objledata(obj.code16segi,obj.CODE16offset,0,LOCATsegrel|LOC16pointer|FD_F2|FD_T6,
+    Obj::ledata(obj.code16segi,obj.CODE16offset,0,LOCATsegrel|LOC16pointer|FD_F2|FD_T6,
         idx,idx);
     obj.CODE16offset += 4;
 
-    obj_bytes(obj.code16segi,obj.CODE16offset,3,"\x66\x67\xEA");    // JMPF L2
+    Obj::bytes(obj.code16segi,obj.CODE16offset,3,"\x66\x67\xEA");    // JMPF L2
     obj.CODE16offset += 3;
 
-    objledata(obj.code16segi,obj.CODE16offset,L2offset,
+    Obj::ledata(obj.code16segi,obj.CODE16offset,L2offset,
         LOCATsegrel | LOC32pointer | FD_F1 | FD_T4,
         DGROUPIDX,
         SegData[cseg]->segidx);
@@ -3565,13 +3644,13 @@ void obj_far16thunk(Symbol *s)
  * Mark object file as using floating point.
  */
 
-void obj_fltused()
+void Obj::fltused()
 {
     if (!obj.fltused)
     {
         obj.fltused = 1;
         if (!(config.flags3 & CFG3wkfloat))
-            objextdef("__fltused");
+            Obj::external_def("__fltused");
     }
 }
 

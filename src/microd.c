@@ -5,6 +5,8 @@
 
 #include <assert.h>
 #include <typeinfo>
+#include <string.h>
+#include <ctype.h>
 
 #include "rmem.h"
 #include "root.h"

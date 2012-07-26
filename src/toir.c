@@ -1,6 +1,6 @@
 
 // Compiler implementation of the D programming language
-// Copyright (c) 1999-2011 by Digital Mars
+// Copyright (c) 1999-2012 by Digital Mars
 // All Rights Reserved
 // written by Walter Bright
 // http://www.digitalmars.com
@@ -354,20 +354,6 @@ int intrinsic_op(char *name)
         "4math5ldexpFNaNbNfeiZe",
         "4math6rndtolFNaNbNfeZl",
         "4math6yl2xp1FNaNbNfeeZe",
-
-        "9intrinsic2btFNaNbxPkkZi",
-        "9intrinsic3bsfFNaNbkZi",
-        "9intrinsic3bsrFNaNbkZi",
-        "9intrinsic3btcFNbPkkZi",
-        "9intrinsic3btrFNbPkkZi",
-        "9intrinsic3btsFNbPkkZi",
-        "9intrinsic3inpFNbkZh",
-        "9intrinsic4inplFNbkZk",
-        "9intrinsic4inpwFNbkZt",
-        "9intrinsic4outpFNbkhZh",
-        "9intrinsic5bswapFNaNbkZk",
-        "9intrinsic5outplFNbkkZk",
-        "9intrinsic5outpwFNbktZt",
 #endif
     };
     static const char *std_namearray64[] =
@@ -413,20 +399,6 @@ int intrinsic_op(char *name)
         "4math5ldexpFNaNbNfeiZe",
         "4math6rndtolFNaNbNfeZl",
         "4math6yl2xp1FNaNbNfeeZe",
-
-        "9intrinsic2btFNaNbxPmmZi",
-        "9intrinsic3bsfFNaNbmZi",
-        "9intrinsic3bsrFNaNbmZi",
-        "9intrinsic3btcFNbPmmZi",
-        "9intrinsic3btrFNbPmmZi",
-        "9intrinsic3btsFNbPmmZi",
-        "9intrinsic3inpFNbkZh",
-        "9intrinsic4inplFNbkZk",
-        "9intrinsic4inpwFNbkZt",
-        "9intrinsic4outpFNbkhZh",
-        "9intrinsic5bswapFNaNbkZk",
-        "9intrinsic5outplFNbkkZk",
-        "9intrinsic5outpwFNbktZt",
 #endif
     };
     static unsigned char std_ioptab[] =
@@ -442,20 +414,6 @@ int intrinsic_op(char *name)
         OPscale,
         OPrndtol,
         OPyl2xp1,
-
-        OPbt,
-        OPbsf,
-        OPbsr,
-        OPbtc,
-        OPbtr,
-        OPbts,
-        OPinp,
-        OPinp,
-        OPinp,
-        OPoutp,
-        OPbswap,
-        OPoutp,
-        OPoutp,
     };
 
 #ifdef DMDV2
@@ -475,17 +433,17 @@ int intrinsic_op(char *name)
 
         "4simd6__simdFNaNbNfE4core4simd3XMMNhG16vNhG16vZNhG16v",
 
-        "5bitop2btFNaNbxPkkZi",
-        "5bitop3bsfFNaNbkZi",
-        "5bitop3bsrFNaNbkZi",
-        "5bitop3btcFNbPkkZi",
-        "5bitop3btrFNbPkkZi",
-        "5bitop3btsFNbPkkZi",
+        "5bitop2btFNaNbNfxPkkZi",
+        "5bitop3bsfFNaNbNfkZi",
+        "5bitop3bsrFNaNbNfkZi",
+        "5bitop3btcFNaNbNfPkkZi",
+        "5bitop3btrFNaNbNfPkkZi",
+        "5bitop3btsFNaNbNfPkkZi",
         "5bitop3inpFNbkZh",
         "5bitop4inplFNbkZk",
         "5bitop4inpwFNbkZt",
         "5bitop4outpFNbkhZh",
-        "5bitop5bswapFNaNbkZk",
+        "5bitop5bswapFNaNbNfkZk",
         "5bitop5outplFNbkkZk",
         "5bitop5outpwFNbktZt",
     };
@@ -505,17 +463,17 @@ int intrinsic_op(char *name)
 
         "4simd6__simdFNaNbNfE4core4simd3XMMNhG16vNhG16vZNhG16v",
 
-        "5bitop2btFNaNbxPmmZi",
-        "5bitop3bsfFNaNbmZi",
-        "5bitop3bsrFNaNbmZi",
-        "5bitop3btcFNbPmmZi",
-        "5bitop3btrFNbPmmZi",
-        "5bitop3btsFNbPmmZi",
+        "5bitop2btFNaNbNfxPmmZi",
+        "5bitop3bsfFNaNbNfmZi",
+        "5bitop3bsrFNaNbNfmZi",
+        "5bitop3btcFNaNbNfPmmZi",
+        "5bitop3btrFNaNbNfPmmZi",
+        "5bitop3btsFNaNbNfPmmZi",
         "5bitop3inpFNbkZh",
         "5bitop4inplFNbkZk",
         "5bitop4inpwFNbkZt",
         "5bitop4outpFNbkhZh",
-        "5bitop5bswapFNaNbkZk",
+        "5bitop5bswapFNaNbNfkZk",
         "5bitop5outplFNbkkZk",
         "5bitop5outpwFNbktZt",
     };
@@ -711,7 +669,7 @@ void FuncDeclaration::buildClosure(IRState *irs)
 
         unsigned offset = PTRSIZE;      // leave room for previous sthis
         for (size_t i = 0; i < closureVars.dim; i++)
-        {   VarDeclaration *v = closureVars.tdata()[i];
+        {   VarDeclaration *v = closureVars[i];
             assert(v->isVarDeclaration());
 
 #if DMDV2
@@ -731,7 +689,7 @@ void FuncDeclaration::buildClosure(IRState *irs)
              */
             unsigned memsize;
             unsigned memalignsize;
-            unsigned xalign;
+            structalign_t xalign;
 #if DMDV2
             if (v->storage_class & STClazy)
             {
@@ -753,7 +711,7 @@ void FuncDeclaration::buildClosure(IRState *irs)
             {
                 memsize = v->type->size();
                 memalignsize = v->type->alignsize();
-                xalign = v->type->memalign(global.structalign);
+                xalign = v->alignment;
             }
             AggregateDeclaration::alignmember(xalign, memalignsize, &offset);
             v->offset = offset;
@@ -791,7 +749,7 @@ void FuncDeclaration::buildClosure(IRState *irs)
 
         // Copy function parameters into closure
         for (size_t i = 0; i < closureVars.dim; i++)
-        {   VarDeclaration *v = closureVars.tdata()[i];
+        {   VarDeclaration *v = closureVars[i];
 
             if (!v->isParameter())
                 continue;
@@ -837,24 +795,31 @@ enum RET TypeFunction::retStyle()
     //printf("TypeFunction::retStyle() %s\n", toChars());
 #if DMDV2
     if (isref)
+    {
+        //printf("  ref RETregs\n");
         return RETregs;                 // returns a pointer
+    }
 #endif
 
     Type *tn = next->toBasetype();
-    Type *tns = tn;
+    //printf("tn = %s\n", tn->toChars());
     d_uns64 sz = tn->size();
+    Type *tns = tn;
 
+Lagain:
 #if SARRAYVALUE
-    if (tn->ty == Tsarray)
+    if (tns->ty == Tsarray)
     {
         do
         {
             tns = tns->nextOf()->toBasetype();
         } while (tns->ty == Tsarray);
+
         if (tns->ty != Tstruct)
         {
-            if (global.params.isLinux && linkage != LINKd)
-                ;
+L2:
+            if (global.params.isLinux && linkage != LINKd && !global.params.is64bit)
+                ;                               // 32 bit C/C++ structs always on stack
             else
             {
                 switch (sz)
@@ -862,51 +827,67 @@ enum RET TypeFunction::retStyle()
                     case 2:
                     case 4:
                     case 8:
+                        //printf("  sarray RETregs\n");
                         return RETregs; // return small structs in regs
                                             // (not 3 byte structs!)
                     default:
                         break;
                 }
             }
+            //printf("  sarray RETstack\n");
             return RETstack;
         }
     }
 #endif
 
     if (tns->ty == Tstruct)
-    {   StructDeclaration *sd = ((TypeStruct *)tn)->sym;
-        if (global.params.isLinux && linkage != LINKd)
-            ;
-#if DMDV2
-        else if (sd->dtor || sd->cpctor)
-            ;
+    {   StructDeclaration *sd = ((TypeStruct *)tns)->sym;
+        if (global.params.isLinux && linkage != LINKd && !global.params.is64bit)
+        {
+            //printf("  2 RETstack\n");
+            return RETstack;            // 32 bit C/C++ structs always on stack
+        }
+        if (sd->arg1type && !sd->arg2type)
+        {
+            tns = sd->arg1type;
+#if SARRAYVALUE
+            if (tns->ty != Tstruct)
+                goto L2;
 #endif
-        else
+            goto Lagain;
+        }
+        else if (sd->isPOD())
         {
             switch (sz)
             {   case 1:
                 case 2:
                 case 4:
                 case 8:
+                    //printf("  3 RETregs\n");
                     return RETregs;     // return small structs in regs
                                         // (not 3 byte structs!)
                 default:
                     break;
             }
         }
+        //printf("  3 RETstack\n");
         return RETstack;
     }
     else if ((global.params.isLinux || global.params.isOSX || global.params.isFreeBSD || global.params.isSolaris) &&
              linkage == LINKc &&
-             tn->iscomplex())
+             tns->iscomplex())
     {
-        if (tn->ty == Tcomplex32)
+        if (tns->ty == Tcomplex32)
             return RETregs;     // in EDX:EAX, not ST1:ST0
         else
             return RETstack;
     }
     else
+    {
+        //assert(sz <= 16);
+        //printf("  4 RETregs\n");
         return RETregs;
+    }
 }
 
 

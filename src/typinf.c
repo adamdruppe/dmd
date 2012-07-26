@@ -1,6 +1,6 @@
 
 // Compiler implementation of the D programming language
-// Copyright (c) 1999-2011 by Digital Mars
+// Copyright (c) 1999-2012 by Digital Mars
 // All Rights Reserved
 // written by Walter Bright
 // http://www.digitalmars.com
@@ -511,13 +511,14 @@ void TypeInfoStructDeclaration::toDt(dt_t **pdt)
      *  int function(in void*, in void*) xopCmp;
      *  string function(const(void)*) xtoString;
      *  uint m_flags;
-     *  xgetMembers;
+     *  //xgetMembers;
      *  xdtor;
      *  xpostblit;
      *  uint m_align;
      *  version (X86_64)
      *      TypeInfo m_arg1;
      *      TypeInfo m_arg2;
+     *  xgetRTInfo
      *
      *  name[]
      */
@@ -646,15 +647,18 @@ void TypeInfoStructDeclaration::toDt(dt_t **pdt)
         dtsize_t(pdt, 0);
 
     // uint m_flags;
-    dtsize_t(pdt, tc->hasPointers());
+    size_t m_flags = tc->hasPointers();
+    dtsize_t(pdt, m_flags);
 
 #if DMDV2
+#if 0
     // xgetMembers
     FuncDeclaration *sgetmembers = sd->findGetMembers();
     if (sgetmembers)
         dtxoff(pdt, sgetmembers->toSymbol(), 0, TYnptr);
     else
         dtsize_t(pdt, 0);                        // xgetMembers
+#endif
 
     // xdtor
     FuncDeclaration *sdtor = sd->dtor;
@@ -676,21 +680,29 @@ void TypeInfoStructDeclaration::toDt(dt_t **pdt)
 
     if (global.params.is64bit)
     {
-        TypeTuple *tup = tc->toArgTypes();
-        assert(tup->arguments->dim <= 2);
-        for (size_t i = 0; i < 2; i++)
+        Type *t = sd->arg1type;
+        for (int i = 0; i < 2; i++)
         {
-            if (i < tup->arguments->dim)
+            // m_argi
+            if (t)
             {
-                Type *targ = (tup->arguments->tdata()[i])->type;
-                targ = targ->merge();
-                targ->getTypeInfo(NULL);
-                dtxoff(pdt, targ->vtinfo->toSymbol(), 0, TYnptr);       // m_argi
+                t->getTypeInfo(NULL);
+                dtxoff(pdt, t->vtinfo->toSymbol(), 0, TYnptr);
             }
             else
-                dtsize_t(pdt, 0);                    // m_argi
+                dtsize_t(pdt, 0);
+
+            t = sd->arg2type;
         }
     }
+
+    // xgetRTInfo
+    if (sd->getRTInfo)
+        sd->getRTInfo->toDt(pdt);
+    else if (m_flags)
+        dtsize_t(pdt, 1);       // has pointers
+    else
+        dtsize_t(pdt, 0);       // no pointers
 
     // name[]
     dtnbytes(pdt, namelen + 1, name);
@@ -753,7 +765,7 @@ void TypeInfoTupleDeclaration::toDt(dt_t **pdt)
 
     dt_t *d = NULL;
     for (size_t i = 0; i < dim; i++)
-    {   Parameter *arg = tu->arguments->tdata()[i];
+    {   Parameter *arg = (*tu->arguments)[i];
         Expression *e = arg->type->getTypeInfo(NULL);
         e = e->optimize(WANTvalue);
         e->toDt(&d);
@@ -802,15 +814,9 @@ void TypeInfoDeclaration::toObjFile(int multiobj)
         s->Sdt->dt = DT_common;
     }
 
-#if ELFOBJ || MACHOBJ // Burton
-    if (s->Sdt && s->Sdt->dt == DT_azeros && s->Sdt->DTnext == NULL)
-        s->Sseg = UDATA;
-    else
-        s->Sseg = DATA;
-#endif
     outdata(s);
     if (isExport())
-        obj_export(s,0);
+        objmod->export_symbol(s,0);
 }
 
 #endif
@@ -870,44 +876,23 @@ int TypeClass::builtinTypeInfo()
 Expression *createTypeInfoArray(Scope *sc, Expression *exps[], unsigned dim)
 {
 #if 1
-    /* Get the corresponding TypeInfo_Tuple and
-     * point at its elements[].
-     */
-
-    /* Create the TypeTuple corresponding to the types of args[]
+    /*
+     * Pass a reference to the TypeInfo_Tuple corresponding to the types of the
+     * arguments. Source compatibility is maintained by computing _arguments[]
+     * at the start of the called function by offseting into the TypeInfo_Tuple
+     * reference.
      */
     Parameters *args = new Parameters;
     args->setDim(dim);
     for (size_t i = 0; i < dim; i++)
     {   Parameter *arg = new Parameter(STCin, exps[i]->type, NULL, NULL);
-        args->tdata()[i] = arg;
+        (*args)[i] = arg;
     }
     TypeTuple *tup = new TypeTuple(args);
     Expression *e = tup->getTypeInfo(sc);
     e = e->optimize(WANTvalue);
     assert(e->op == TOKsymoff);         // should be SymOffExp
 
-#if BREAKABI
-    /*
-     * Should just pass a reference to TypeInfo_Tuple instead,
-     * but that would require existing code to be recompiled.
-     * Source compatibility can be maintained by computing _arguments[]
-     * at the start of the called function by offseting into the
-     * TypeInfo_Tuple reference.
-     */
-
-#else
-    // Advance to elements[] member of TypeInfo_Tuple
-    SymOffExp *se = (SymOffExp *)e;
-    se->offset += PTRSIZE + PTRSIZE;
-
-    // Set type to TypeInfo[]*
-    se->type = Type::typeinfo->type->arrayOf()->pointerTo();
-
-    // Indirect to get the _arguments[] value
-    e = new PtrExp(0, se);
-    e->type = se->type->next;
-#endif
     return e;
 #else
     /* Improvements:

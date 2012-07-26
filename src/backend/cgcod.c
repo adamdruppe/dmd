@@ -37,11 +37,18 @@ STATIC code * loadcse(elem *,unsigned,regm_t);
 STATIC void blcodgen(block *);
 STATIC void cgcod_eh();
 STATIC code * cse_save(regm_t ms);
-STATIC int cse_simple(elem *e,int i);
 STATIC code * comsub(elem *,regm_t *);
 
 bool floatreg;                  // !=0 if floating register is required
 
+int hasframe;                   // !=0 if this function has a stack frame
+targ_size_t spoff;
+targ_size_t Foff;               // BP offset of floating register
+targ_size_t CSoff;              // offset of common sub expressions
+targ_size_t NDPoff;             // offset of saved 8087 registers
+int BPoff;                      // offset from BP
+int EBPtoESP;                   // add to EBP offset to get ESP offset
+int AAoff;                      // offset of alloca temporary
 targ_size_t Aoffset;            // offset of automatics and registers
 targ_size_t Toffset;            // offset of temporaries
 targ_size_t EEoffset;           // offset of SCstack variables from ESP
@@ -111,12 +118,10 @@ static regm_t lastretregs,last2retregs,last3retregs,last4retregs,last5retregs;
 void codgen()
 {   block *b,*bn;
     bool flag;
-    int i;
     targ_size_t swoffset,coffset;
     tym_t functy;
     unsigned nretblocks;                // number of return blocks
     code *cprolog;
-    regm_t noparams;
 #if SCPP
     block *btry;
 #endif
@@ -129,15 +134,7 @@ void codgen()
     csmax = 64;
     csextab = (struct CSE *) util_calloc(sizeof(struct CSE),csmax);
     functy = tybasic(funcsym_p->ty());
-#if TARGET_LINUX || TARGET_OSX || TARGET_FREEBSD || TARGET_OPENBSD || TARGET_SOLARIS
-    regm_t value = BYTEREGS_INIT;
-    ALLREGS = ALLREGS_INIT;
-    BYTEREGS = value;
-    if (I64)
-    {   ALLREGS = mAX|mBX|mCX|mDX|mSI|mDI| mR8|mR9|mR10|mR11|mR12|mR13|mR14|mR15;
-        BYTEREGS = ALLREGS;
-    }
-#endif
+    cod3_initregs();
     allregs = ALLREGS;
     pass = PASSinit;
 
@@ -204,14 +201,14 @@ tryagain:
 
     if (!config.fulltypes || (config.flags4 & CFG4optimized))
     {
-        noparams = 0;
-        for (i = 0; i < globsym.top; i++)
+        regm_t noparams = 0;
+        for (int i = 0; i < globsym.top; i++)
         {
             Symbol *s = globsym.tab[i];
             s->Sflags &= ~SFLread;
             switch (s->Sclass)
             {   case SCfastpar:
-                    regcon.params |= mask[s->Spreg];
+                    regcon.params |= s->Spregm();
                 case SCparameter:
                     if (s->Sfl == FLreg)
                         noparams |= s->Sregm;
@@ -283,7 +280,7 @@ tryagain:
         cstop--;
 
     if (configv.addlinenumbers)
-        objlinnum(funcsym_p->Sfunc->Fstartline,Coffset);
+        Obj::linnum(funcsym_p->Sfunc->Fstartline,Coffset);
 
     // Otherwise, jmp's to startblock will execute the prolog again
     assert(!startblock->Bpred);
@@ -340,8 +337,8 @@ tryagain:
         for (b = startblock; b; b = b->Bnext)
         {   if (b->Bflags & BFLjmpoptdone)      /* if no more jmp opts for this blk */
                 continue;
-            i = branch(b,0);            // see if jmp => jmp short
-            if (i)                      /* if any bytes saved           */
+            int i = branch(b,0);            // see if jmp => jmp short
+            if (i)                          // if any bytes saved
             {   targ_size_t offset;
 
                 b->Bsize -= i;
@@ -413,8 +410,7 @@ tryagain:
             {   unsigned u = b->Balign;
                 unsigned nalign = (u - (unsigned)Coffset) & (u - 1);
 
-                while (nalign--)
-                    obj_byte(cseg,Coffset++,0x90);      // XCHG AX,AX
+                cod3_align_bytes(nalign);
             }
             assert(b->Boffset == Coffset);
 
@@ -456,7 +452,7 @@ tryagain:
 #endif
     {   assert(!(config.flags & CFGromable));
         //printf("framehandleroffset = x%x, coffset = x%x\n",framehandleroffset,coffset);
-        reftocodseg(cseg,framehandleroffset,coffset);
+        Obj::reftocodeseg(cseg,framehandleroffset,coffset);
     }
 #endif
 
@@ -497,7 +493,7 @@ tryagain:
            start of the last instruction
          */
         /* Instead, try offset to cleanup code  */
-        objlinnum(funcsym_p->Sfunc->Fendline,funcoffset + retoffset);
+        Obj::linnum(funcsym_p->Sfunc->Fendline,funcoffset + retoffset);
 
 #if MARS
     if (usednteh & NTEH_try)
@@ -560,6 +556,328 @@ tryagain:
 #endif
 }
 
+/*******************************
+ * Generate code for a function start.
+ * Input:
+ *      Coffset         address of start of code
+ * Output:
+ *      Coffset         adjusted for size of code generated
+ *      EBPtoESP
+ *      hasframe
+ *      BPoff
+ */
+
+code *prolog()
+{
+    SYMIDX si;
+    bool enter;
+    unsigned Foffset;
+    unsigned xlocalsize;     // amount to subtract from ESP to make room for locals
+    char guessneedframe;
+    regm_t namedargs = 0;
+
+    //printf("cod3.prolog(), needframe = %d, Aalign = %d\n", needframe, Aalign);
+    debugx(debugw && printf("funcstart()\n"));
+    regcon.immed.mval = 0;                      /* no values in registers yet   */
+    EBPtoESP = -REGSIZE;
+    hasframe = 0;
+    bool pushds = false;
+    BPoff = 0;
+    code *c = CNIL;
+    bool pushalloc = false;
+    tym_t tyf = funcsym_p->ty();
+    tym_t tym = tybasic(tyf);
+    unsigned farfunc = tyfarfunc(tym);
+    if (config.flags & CFGalwaysframe || funcsym_p->Sfunc->Fflags3 & Ffakeeh)
+        needframe = 1;
+
+Lagain:
+    spoff = 0;
+    guessneedframe = needframe;
+//    if (needframe && config.exe & (EX_LINUX | EX_FREEBSD | EX_SOLARIS) && !(usednteh & ~NTEHjmonitor))
+//      usednteh |= NTEHpassthru;
+
+    /* Compute BP offsets for variables on stack.
+     * The organization is:
+     *  Poff    parameters
+     *          seg of return addr      (if far function)
+     *          IP of return addr
+     *  BP->    caller's BP
+     *          DS                      (if Windows prolog/epilog)
+     *          exception handling context symbol
+     *  Aoff    autos and regs
+     *  regsave.off  any saved registers
+     *  Foff    floating register
+     *  AAoff   alloca temporary
+     *  CSoff   common subs
+     *  NDPoff  any 8087 saved registers
+     *  Toff    temporaries
+     *          monitor context record
+     *          any saved registers
+     */
+
+    if (tym == TYifunc)
+        Poff = 26; // how is this number derived?
+    else
+        Poff = (farfunc ? 3 : 2) * REGSIZE;
+
+    Aoff = 0;
+#if NTEXCEPTIONS == 2
+    Aoff -= nteh_contextsym_size();
+#if MARS
+    if (funcsym_p->Sfunc->Fflags3 & Ffakeeh && nteh_contextsym_size() == 0)
+        Aoff -= 5 * 4;
+#endif
+#endif
+    Aoff = -align(0,-Aoff + Aoffset);
+
+    regsave.off = Aoff - align(0,regsave.top);
+    Foffset = floatreg ? (config.fpxmmregs ? 16 : DOUBLESIZE) : 0;
+    Foff = regsave.off - align(0,Foffset);
+    assert(usedalloca != 1);
+    AAoff = usedalloca ? (Foff - REGSIZE) : Foff;
+    CSoff = AAoff - align(0,cstop * REGSIZE);
+#if TX86
+    NDPoff = CSoff - align(0,NDP::savetop * NDPSAVESIZE);
+#else
+    NDPoff = CSoff;
+#endif
+    Toff = NDPoff - align(0,Toffset);
+
+    if (Foffset > Aalign)
+        Aalign = Foffset;
+    if (Aalign > REGSIZE)
+    {
+        // Adjust Aoff so that it is Aalign byte aligned, assuming that
+        // before function parameters were pushed the stack was
+        // Aalign byte aligned
+        targ_size_t psize = (Poffset + (REGSIZE - 1)) & ~(REGSIZE - 1);
+        int sz = psize + -Aoff + Poff + (needframe ? 0 : REGSIZE);
+        if (sz & (Aalign - 1))
+        {   int adj = Aalign - (sz & (Aalign - 1));
+            Aoff -= adj;
+            regsave.off -= adj;
+            Foff -= adj;
+            AAoff -= adj;
+            CSoff -= adj;
+            NDPoff -= adj;
+            Toff -= adj;
+        }
+    }
+
+    localsize = -Toff;
+
+    regm_t topush = fregsaved & ~mfuncreg;     // mask of registers that need saving
+    int npush = 0;                      // number of registers that need saving
+    for (regm_t x = topush; x; x >>= 1)
+        npush += x & 1;
+
+    // Keep the stack aligned by 8 for any subsequent function calls
+    if (!I16 && calledafunc &&
+        (STACKALIGN == 16 || config.flags4 & CFG4stackalign))
+    {
+        //printf("npush = %d Poff = x%x needframe = %d localsize = x%x\n",
+        //       npush, Poff, needframe, localsize);
+
+        int sz = Poff + (needframe ? 0 : -REGSIZE) + localsize + npush * REGSIZE;
+        if (STACKALIGN == 16)
+        {
+            if (sz & (8|4))
+                localsize += STACKALIGN - (sz & (8|4));
+        }
+        else if (sz & 4)
+            localsize += 4;
+    }
+
+    //printf("Foff x%02x Aoff x%02x Toff x%02x NDPoff x%02x CSoff x%02x Poff x%02x localsize x%02x\n",
+        //(int)Foff,(int)Aoff,(int)Toff,(int)NDPoff,(int)CSoff,(int)Poff,(int)localsize);
+
+    xlocalsize = localsize;
+
+    if (tyf & mTYnaked)                 // if no prolog/epilog for function
+    {
+        hasframe = 1;
+        return NULL;
+    }
+
+    if (tym == TYifunc)
+    {
+        c = cat(c, prolog_ifunc(&tyf));
+        hasframe = 1;
+        goto Lcont;
+    }
+
+    /* Determine if we need BP set up   */
+    if (config.flags & CFGalwaysframe)
+        needframe = 1;
+    else
+    {
+        if (localsize)
+        {
+            if (I16 ||
+                !(config.flags4 & CFG4speed) ||
+                config.target_cpu < TARGET_Pentium ||
+                farfunc ||
+                config.flags & CFGstack ||
+                xlocalsize >= 0x1000 ||
+                (usednteh & ~NTEHjmonitor) ||
+                anyiasm ||
+                usedalloca
+               )
+                needframe = 1;
+        }
+        if (refparam && (anyiasm || I16))
+            needframe = 1;
+    }
+
+    if (needframe)
+    {   assert(mfuncreg & mBP);         // shouldn't have used mBP
+
+        if (!guessneedframe)            // if guessed wrong
+            goto Lagain;
+    }
+
+    if (I16 && config.wflags & WFwindows && farfunc)
+    {
+        c = cat(c, prolog_16bit_windows_farfunc(&tyf, &pushds));
+        enter = false;                  /* don't use ENTER instruction  */
+        hasframe = 1;                   /* we have a stack frame        */
+    }
+    else if (needframe)                 // if variables or parameters
+    {
+        c = cat(c, prolog_frame(farfunc, &xlocalsize, &enter));
+        hasframe = 1;
+    }
+
+    if (config.flags & CFGstack)        /* if stack overflow check      */
+        goto Ladjstack;
+
+    if (needframe)                      /* if variables or parameters   */
+    {
+        if (xlocalsize)                 /* if any stack offset          */
+        {
+        Ladjstack:
+            c = cat(c, prolog_frameadj(tyf, xlocalsize, enter, &pushalloc));
+
+            if (usedalloca)
+                c = cat(c, prolog_setupalloca());
+        }
+        else
+            assert(usedalloca == 0);
+    }
+    else if (xlocalsize)
+    {
+        assert(I32);
+        c = cat(c, prolog_frameadj2(tyf, xlocalsize, &pushalloc));
+        BPoff += REGSIZE;
+    }
+    else
+        assert((localsize | usedalloca) == 0 || (usednteh & NTEHjmonitor));
+    EBPtoESP += xlocalsize;
+
+    /*  The idea is to generate trace for all functions if -Nc is not thrown.
+     *  If -Nc is thrown, generate trace only for global COMDATs, because those
+     *  are relevant to the FUNCTIONS statement in the linker .DEF file.
+     *  This same logic should be in epilog().
+     */
+    if (config.flags & CFGtrace &&
+        (!(config.flags4 & CFG4allcomdat) ||
+         funcsym_p->Sclass == SCcomdat ||
+         funcsym_p->Sclass == SCglobal ||
+         (config.flags2 & CFG2comdat && SymInline(funcsym_p))
+        )
+       )
+    {
+        unsigned spalign = 0;
+        int sz = Poff + (needframe ? 0 : -REGSIZE) + localsize;
+        if (STACKALIGN == 16 && (sz & (STACKALIGN - 1)))
+            spalign = STACKALIGN - (sz & (STACKALIGN - 1));
+
+        if (spalign)
+        {   /* This could be avoided by moving the function call to after the
+             * registers are saved. But I don't remember why the call is here
+             * and not there.
+             */
+            c = cod3_stackadj(c, spalign);
+        }
+
+        unsigned regsaved;
+        c = cat(c, prolog_trace(farfunc, &regsaved));
+
+        if (spalign)
+            c = cod3_stackadj(c, -spalign);
+        useregs((ALLREGS | mBP | mES) & ~regsaved);
+    }
+
+#if MARS
+    if (usednteh & NTEHjmonitor)
+    {   Symbol *sthis;
+
+        for (si = 0; 1; si++)
+        {   assert(si < globsym.top);
+            sthis = globsym.tab[si];
+            if (strcmp(sthis->Sident,"this") == 0)
+                break;
+        }
+        c = cat(c,nteh_monitor_prolog(sthis));
+        EBPtoESP += 3 * 4;
+    }
+#endif
+
+    while (topush)                      /* while registers to push      */
+    {   unsigned reg = findreg(topush);
+        topush &= ~mask[reg];
+        c = genpush(c, reg);
+        EBPtoESP += REGSIZE;
+        spoff += REGSIZE;
+#if ELFOBJ || MACHOBJ
+        if (config.fulltypes)
+        {   // Emit debug_frame data giving location of saved register
+            // relative to 0[EBP]
+            pinholeopt(c, NULL);
+            dwarf_CFA_set_loc(calcblksize(c));  // address after PUSH reg
+            dwarf_CFA_offset(reg, -EBPtoESP - REGSIZE);
+        }
+#endif
+    }
+
+Lcont:
+
+    c = cat(c, prolog_ifunc2(tyf, tym, pushds));
+
+#if NTEXCEPTIONS == 2
+    if (usednteh & NTEH_except)
+        c = cat(c,nteh_setsp(0x89));            // MOV __context[EBP].esp,ESP
+#endif
+
+    // Load register parameters off of the stack. Do not use
+    // assignaddr(), as it will replace the stack reference with
+    // the register!
+    c = cat(c, prolog_loadparams(tyf, pushalloc, &namedargs));
+
+    /* Load arguments passed in registers into the varargs save area
+     * so they can be accessed by va_arg().
+     */
+    if (I64 && variadic(funcsym_p->Stype))
+    {
+        /* Look for __va_argsave
+         */
+        symbol *sv = NULL;
+        for (SYMIDX si = 0; si < globsym.top; si++)
+        {   symbol *s = globsym.tab[si];
+            if (s->Sident[0] == '_' && strcmp(s->Sident, "__va_argsave") == 0)
+            {   sv = s;
+                break;
+            }
+        }
+
+        if (sv && !(sv->Sflags & SFLdead))
+            c = cat(c, prolog_genvarargs(sv, &namedargs));
+    }
+
+    return c;
+}
+
 
 /******************************
  * Compute offsets for remaining tmp, automatic and register variables
@@ -572,10 +890,6 @@ void stackoffsets(int flags)
     targ_size_t Amax,sz;
     unsigned alignsize;
     int offi;
-#if AUTONEST
-    targ_size_t offstack[20];
-    int offi = 0;                       // index into offstack[]
-#endif
     vec_t tbl = NULL;
 
 
@@ -612,7 +926,18 @@ void stackoffsets(int flags)
             }
             alignsize = type_alignsize(s->Stype);
 
-            //printf("symbol '%s', size = x%lx, align = %d, read = %x\n",s->Sident,(long)sz, (int)type_alignsize(s->Stype), s->Sflags & SFLread);
+            /* The purpose of this is to reduce alignment faults when SIMD vectors
+             * are reinterpreted cast to other types with less alignment.
+             */
+            if (sz == 16 && config.fpxmmregs && alignsize < sz &&
+                (s->Sclass == SCauto || s->Sclass == SCtmp)
+               )
+                alignsize = sz;
+
+            if (s->Salignment > 0)
+                alignsize = s->Salignment;
+
+            //printf("symbol '%s', size = x%lx, align = %d, read = %x\n",s->Sident,(long)sz, (int)alignsize, s->Sflags & SFLread);
             assert((int)sz >= 0);
 
             if (pass == 1)
@@ -649,25 +974,6 @@ void stackoffsets(int flags)
             /* Can't do this for CPP because the inline function expander
                 adds new symbols on the end.
              */
-#if AUTONEST
-            /*printf("symbol '%s', push = %d, pop = %d\n",
-                s->Sident,s->Spush,s->Spop);*/
-
-            /* Can't do this for optimizer if any code motion occurred.
-                Code motion changes the live range, so variables that
-                occupy the same space could have live ranges that overlap!
-             */
-            if (config.flags4 & CFG4optimized)
-                s->Spop = 0;
-            else
-                while (s->Spush != 0)
-                {   s->Spush--;
-                    assert(offi < arraysize(offstack));
-                    /*printf("Pushing offset x%x\n",Aoffset);*/
-                    offstack[offi++] = Aoffset;
-                }
-#endif
-
             switch (s->Sclass)
             {
                 case SCfastpar:
@@ -709,8 +1015,8 @@ void stackoffsets(int flags)
                         vec_setbit(si,tbl);
 
                     // Align doubles to 8 byte boundary
-                    if (!I16 && type_alignsize(s->Stype) > REGSIZE)
-                        Aalign = type_alignsize(s->Stype);
+                    if (!I16 && alignsize > REGSIZE)
+                        Aalign = alignsize;
                 L2:
                     break;
 
@@ -750,15 +1056,6 @@ void stackoffsets(int flags)
 #endif
                     assert(0);
             }
-
-#if AUTONEST
-            while (s->Spop != 0)
-            {   s->Spop--;
-                assert(offi > 0);
-                Aoffset = offstack[--offi];
-                /*printf("Popping offset x%x\n",Aoffset);*/
-            }
-#endif
         }
     }
     Aoffset = Amax;
@@ -835,10 +1132,10 @@ STATIC void blcodgen(block *bl)
 
             sflsave[i] = s->Sfl;
             if (s->Sclass & SCfastpar &&
-                regcon.params & mask[s->Spreg] &&
+                regcon.params & s->Spregm() &&
                 vec_testbit(dfoidx,s->Srange))
             {
-                regcon.used |= mask[s->Spreg];
+                regcon.used |= s->Spregm();
             }
 
             if (s->Sfl == FLreg)
@@ -858,6 +1155,7 @@ STATIC void blcodgen(block *bl)
                         regcon.mvar |= s->Sregm;
                         regcon.cse.mval &= ~s->Sregm;
                         regcon.immed.mval &= ~s->Sregm;
+                        regcon.params &= ~s->Sregm;
                         if (s->Sclass == SCfastpar)
                             regcon.mpvar |= s->Sregm;
                     }
@@ -1576,7 +1874,9 @@ STATIC code * cse_save(regm_t ms)
             ms &= ~mask[reg];           /* turn off reg bit in ms       */
 
             // If we can simply reload the CSE, we don't need to save it
-            if (!cse_simple(csextab[i].e,i))
+            if (cse_simple(&csextab[i].csimple, csextab[i].e))
+                csextab[i].flags |= CSEsimple;
+            else
             {
                 c = cat(c, gensavereg(reg, i));
                 reflocal = TRUE;
@@ -1615,71 +1915,6 @@ code *cse_flush(int do87)
     if (do87)
         c = cat(c,save87());    // save any 8087 temporaries
     return c;
-}
-
-/*************************************************
- */
-
-STATIC int cse_simple(elem *e,int i)
-{   regm_t regm;
-    unsigned reg;
-    code *c;
-    int sz;
-
-    sz = tysize[tybasic(e->Ety)];
-    if (!I16 &&                                  // don't bother with 16 bit code
-        e->Eoper == OPadd &&
-        sz == REGSIZE &&
-        e->E2->Eoper == OPconst &&
-        e->E1->Eoper == OPvar &&
-        isregvar(e->E1,&regm,&reg) &&
-        sz <= REGSIZE &&
-        !(e->E1->EV.sp.Vsym->Sflags & SFLspill)
-       )
-    {
-        c = &csextab[i].csimple;
-        memset(c,0,sizeof(*c));
-
-        // Make this an LEA instruction
-        c->Iop = 0x8D;                          // LEA
-        buildEA(c,reg,-1,1,e->E2->EV.Vuns);
-        if (I64)
-        {   if (sz == 8)
-                c->Irex |= REX_W;
-            else if (sz == 1 && reg >= 4)
-                c->Irex |= REX;
-        }
-
-        csextab[i].flags |= CSEsimple;
-        return 1;
-    }
-    else if (e->Eoper == OPind &&
-        sz <= REGSIZE &&
-        e->E1->Eoper == OPvar &&
-        isregvar(e->E1,&regm,&reg) &&
-        (I32 || I64 || regm & IDXREGS) &&
-        !(e->E1->EV.sp.Vsym->Sflags & SFLspill)
-       )
-    {
-        c = &csextab[i].csimple;
-        memset(c,0,sizeof(*c));
-
-        // Make this a MOV instruction
-        c->Iop = (sz == 1) ? 0x8A : 0x8B;       // MOV reg,EA
-        buildEA(c,reg,-1,1,0);
-        if (sz == 2 && I32)
-            c->Iflags |= CFopsize;
-        else if (I64)
-        {   if (sz == 8)
-                c->Irex |= REX_W;
-            else if (sz == 1 && reg >= 4)
-                c->Irex |= REX;
-        }
-
-        csextab[i].flags |= CSEsimple;
-        return 1;
-    }
-    return 0;
 }
 
 /*************************
@@ -1910,10 +2145,7 @@ if (regcon.cse.mval & 1) elem_print(regcon.cse.value[i]);
                         csextab[i].flags |= CSEload;
                         if (*pretregs == mPSW)  /* if result in CCs only */
                         {                       // CMP cs[BP],0
-                            c = genc(NULL,0x81 ^ byte,modregrm(2,7,BPRM),
-                                        FLcs,i, FLconst,(targ_uns) 0);
-                            if (I32 && sz == 2)
-                                c->Iflags |= CFopsize;
+                            c = gen_testcse(NULL, sz, i);
                         }
                         else
                         {
@@ -1921,10 +2153,7 @@ if (regcon.cse.mval & 1) elem_print(regcon.cse.value[i]);
                             if (byte && !(retregs & BYTEREGS))
                                     retregs = BYTEREGS;
                             c = allocreg(&retregs,&reg,tym);
-                                            // MOV reg,cs[BP]
-                            c = genc1(c,0x8B,modregxrm(2,reg,BPRM),FLcs,(targ_uns) i);
-                            if (I64)
-                                code_orrex(c, REX_W);
+                            c = gen_loadcse(c, reg, i);
                         L10:
                             regcon.cse.mval |= mask[reg]; // cs is in a reg
                             regcon.cse.value[reg] = e;
@@ -2052,28 +2281,18 @@ done:
  */
 
 STATIC code * loadcse(elem *e,unsigned reg,regm_t regm)
-{ unsigned i,op;
-  code *c;
-
-  for (i = cstop; i--;)
+{
+  for (unsigned i = cstop; i--;)
   {
         //printf("csextab[%d] = %p, regm = x%x\n", i, csextab[i].e, csextab[i].regm);
         if (csextab[i].e == e && csextab[i].regm & regm)
         {
                 reflocal = TRUE;
                 csextab[i].flags |= CSEload;    /* it was loaded        */
-                c = getregs(mask[reg]);
                 regcon.cse.value[reg] = e;
                 regcon.cse.mval |= mask[reg];
-                op = 0x8B;
-                if (reg == ES)
-                {       op = 0x8E;
-                        reg = 0;
-                }
-                c = genc1(c,op,modregxrm(2,reg,BPRM),FLcs,(targ_uns) i);
-                if (I64)
-                    code_orrex(c, REX_W);
-                return c;
+                code *c = getregs(mask[reg]);
+                return gen_loadcse(c, reg, i);
         }
   }
 #if DEBUG
@@ -2377,19 +2596,14 @@ code *scodelem(elem *e,regm_t *pretregs,regm_t keepmsk,bool constflag)
             sz = -(adjesp & 7) & 7;
         if (calledafunc && !I16 && sz && (STACKALIGN == 16 || config.flags4 & CFG4stackalign))
         {
-            unsigned grex = I64 ? REX_W << 16 : 0;
             regm_t mval_save = regcon.immed.mval;
             regcon.immed.mval = 0;      // prevent reghasvalue() optimizations
                                         // because c hasn't been executed yet
-            cs1 = genc2(cs1,0x81,grex | modregrm(3,5,SP),sz);  // SUB ESP,sz
-            if (I64)
-                code_orrex(cs1, REX_W);
+            cs1 = cod3_stackadj(cs1, sz);
             regcon.immed.mval = mval_save;
             cs1 = genadjesp(cs1, sz);
 
-            code *cx = genc2(CNIL,0x81,grex | modregrm(3,0,SP),sz);  // ADD ESP,sz
-            if (I64)
-                code_orrex(cx, REX_W);
+            code *cx = cod3_stackadj(NULL, -sz);
             cx = genadjesp(cx, -sz);
             cs2 = cat(cx, cs2);
         }
