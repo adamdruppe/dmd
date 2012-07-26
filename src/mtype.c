@@ -1288,7 +1288,22 @@ Type *Type::aliasthisOf()
                 Expression *ethis = this->defaultInit(0);
                 fd = fd->overloadResolve(0, ethis, NULL);
                 if (fd)
-                    t = ((TypeFunction *)fd->type)->next;
+                {   TypeFunction *tf = (TypeFunction *)fd->type;
+                    if (!tf->next && fd->inferRetType)
+                    {
+                        TemplateInstance *spec = fd->isSpeculative();
+                        int olderrs = global.errors;
+                        fd->semantic3(fd->scope);
+                        // Update the template instantiation with the number
+                        // of errors which occured.
+                        if (spec && global.errors != olderrs)
+                            spec->errors = global.errors - olderrs;
+                        tf = (TypeFunction *)fd->type;
+                    }
+                    t = tf->next;
+                    if (tf->isWild())
+                        t = t->substWildTo(mod == 0 ? MODmutable : mod);
+                }
             }
             return t;
         }
@@ -1614,6 +1629,8 @@ Type *Type::merge()
     if (ty == Ttypeof) return this;
     if (ty == Tident) return this;
     if (ty == Tinstance) return this;
+    if (ty == Taarray && !((TypeAArray *)this)->index->merge()->deco)
+        return this;
     if (nextOf() && !nextOf()->merge()->deco)
         return this;
 
@@ -1868,7 +1885,10 @@ Type *Type::substWildTo(unsigned mod)
             else if (ty == Tsarray)
                 t = new TypeSArray(t, ((TypeSArray *)this)->dim->syntaxCopy());
             else if (ty == Taarray)
+            {
                 t = new TypeAArray(t, ((TypeAArray *)this)->index->syntaxCopy());
+                ((TypeAArray *)t)->sc = ((TypeAArray *)this)->sc;   // duplicate scope
+            }
             else
                 assert(0);
 
@@ -2171,11 +2191,15 @@ void Type::resolve(Loc loc, Scope *sc, Expression **pe, Type **pt, Dsymbol **ps)
 }
 
 /*******************************
- * If one of the subtypes of this type is a TypeIdentifier,
- * i.e. it's an unresolved type, return that type.
+ * tparams == NULL:
+ *     If one of the subtypes of this type is a TypeIdentifier,
+ *     i.e. it's an unresolved type, return that type.
+ * tparams != NULL:
+ *     Only when the TypeIdentifier is one of template parameters,
+ *     return that type.
  */
 
-Type *Type::reliesOnTident()
+Type *Type::reliesOnTident(TemplateParameters *tparams)
 {
     return NULL;
 }
@@ -2295,9 +2319,9 @@ void TypeNext::checkDeprecated(Loc loc, Scope *sc)
 }
 
 
-Type *TypeNext::reliesOnTident()
+Type *TypeNext::reliesOnTident(TemplateParameters *tparams)
 {
-    return next->reliesOnTident();
+    return next->reliesOnTident(tparams);
 }
 
 int TypeNext::hasWild()
@@ -4414,8 +4438,8 @@ StructDeclaration *TypeAArray::getImpl()
          * which has Tident's instead of real types.
          */
         Objects *tiargs = new Objects();
-        tiargs->push(index);
-        tiargs->push(next);
+        tiargs->push(index->substWildTo(MODconst)); // hack for bug7757
+        tiargs->push(next ->substWildTo(MODconst)); // hack for bug7757
 
         // Create AssociativeArray!(index, next)
 #if 1
@@ -5582,8 +5606,8 @@ Type *TypeFunction::semantic(Loc loc, Scope *sc)
         return terror;
     }
 
-    if (tf->isproperty && (tf->varargs || Parameter::dim(tf->parameters) > 1))
-        error(loc, "properties can only have zero or one parameter");
+    if (tf->isproperty && (tf->varargs || Parameter::dim(tf->parameters) > 2))
+        error(loc, "properties can only have zero, one, or two parameter");
 
     if (tf->varargs == 1 && (tf->linkage != LINKd && tf->linkage != LINKjs) && Parameter::dim(tf->parameters) == 0)
         error(loc, "variadic functions with non-D linkage must have at least one parameter");
@@ -5925,16 +5949,16 @@ Nomatch:
     return MATCHnomatch;
 }
 
-Type *TypeFunction::reliesOnTident()
+Type *TypeFunction::reliesOnTident(TemplateParameters *tparams)
 {
     size_t dim = Parameter::dim(parameters);
     for (size_t i = 0; i < dim; i++)
     {   Parameter *fparam = Parameter::getNth(parameters, i);
-        Type *t = fparam->type->reliesOnTident();
+        Type *t = fparam->type->reliesOnTident(tparams);
         if (t)
             return t;
     }
-    return next ? next->reliesOnTident() : NULL;
+    return next ? next->reliesOnTident(tparams) : NULL;
 }
 
 /********************************************
@@ -6550,9 +6574,23 @@ Type *TypeIdentifier::semantic(Loc loc, Scope *sc)
     return t;
 }
 
-Type *TypeIdentifier::reliesOnTident()
+Type *TypeIdentifier::reliesOnTident(TemplateParameters *tparams)
 {
-    return this;
+    if (tparams)
+    {
+        if (idents.dim == 0)
+        {
+            for (size_t i = 0; i < tparams->dim; i++)
+            {   TemplateParameter *tp = tparams->tdata()[i];
+
+                if (tp->ident->equals(ident))
+                    return this;
+            }
+        }
+        return NULL;
+    }
+    else
+        return this;
 }
 
 Expression *TypeIdentifier::toExpression()
@@ -8588,14 +8626,14 @@ int TypeTuple::equals(Object *o)
     return 0;
 }
 
-Type *TypeTuple::reliesOnTident()
+Type *TypeTuple::reliesOnTident(TemplateParameters *tparams)
 {
     if (arguments)
     {
         for (size_t i = 0; i < arguments->dim; i++)
         {
             Parameter *arg = arguments->tdata()[i];
-            Type *t = arg->type->reliesOnTident();
+            Type *t = arg->type->reliesOnTident(tparams);
             if (t)
                 return t;
         }

@@ -2575,6 +2575,23 @@ static assert({
 }() == 4);
 
 /**************************************************
+    7789 (*p).length++ where *p is null
+**************************************************/
+
+struct S7789
+{
+    size_t foo()
+    {
+        _ary.length += 1;
+        return _ary.length;
+    }
+
+    int[] _ary;
+}
+
+static assert(S7789().foo());
+
+/**************************************************
     6418 member named 'length'
 **************************************************/
 
@@ -4034,6 +4051,18 @@ int bug7527()
 static assert(!is(typeof(compiles!(bug7527()))));
 
 /**************************************************
+    7527
+**************************************************/
+
+int bug7380;
+
+static assert(!is(typeof( compiles!(
+    (){
+        return &bug7380;
+    }()
+))));
+
+/**************************************************
     7165
 **************************************************/
 
@@ -4186,3 +4215,94 @@ static assert(bug6681(2));
 static assert(!is(typeof(compiles!(bug6681(1)))));
 static assert(!is(typeof(compiles!(bug6681(3)))));
 static assert(!is(typeof(compiles!(bug6681(4)))));
+
+/**************************************************
+    6438 void
+**************************************************/
+
+struct S6438
+{
+    int a;
+    int b = void;
+}
+
+void fill6438(int[] arr, int testnum)
+{
+    if (testnum == 2)
+    {
+        auto u = arr[0];
+    }
+    foreach(ref x; arr)
+        x = 7;
+    auto r = arr[0];
+    S6438[2] s;
+    auto p = &s[0].b;
+    if (testnum == 3)
+    {
+        auto v = *p;
+    }
+}
+
+bool bug6438(int testnum)
+{
+    int[4] stackSpace = void;
+    fill6438(stackSpace[], testnum);
+    assert(stackSpace == [7,7,7,7]);
+    return true;
+}
+
+static assert( is(typeof(compiles!(bug6438(1)))));
+static assert(!is(typeof(compiles!(bug6438(2)))));
+static assert(!is(typeof(compiles!(bug6438(3)))));
+
+/**************************************************
+    7732
+**************************************************/
+
+struct AssociativeArray
+{
+    int *impl;
+    int f()
+    {
+        if (impl !is null)
+            auto x = *impl;
+        return 1;
+    }
+}
+
+int test7732()
+{
+    AssociativeArray aa;
+    return aa.f;
+}
+
+static assert( test7732() );
+
+/**************************************************
+    7781
+**************************************************/
+
+static assert( ({return;}(), true) );
+
+/**************************************************
+    7785
+**************************************************/
+
+bool bug7785(int n)
+{
+    int val = 7;
+    auto p = &val;
+    if (n==2) {
+        auto ary = p[0 .. 1];
+    }
+    auto x = p[0];
+    val = 6;
+    assert(x == 7);
+    if (n==3)
+        p[0..1] = 1;
+    return true;
+}
+
+static assert(bug7785(1));
+static assert(!is(typeof(compiles!(bug7785(2)))));
+static assert(!is(typeof(compiles!(bug7785(3)))));

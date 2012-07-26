@@ -1,5 +1,5 @@
 // Compiler implementation of the D programming language
-// Copyright (c) 1999-2011 by Digital Mars
+// Copyright (c) 1999-2012 by Digital Mars
 // All Rights Reserved
 // written by Walter Bright
 // http://www.digitalmars.com
@@ -157,6 +157,11 @@ void FuncDeclaration::semantic(Scope *sc)
     {
         assert(semanticRun <= PASSsemantic);
         semanticRun = PASSsemantic;
+    }
+
+    if (scope)
+    {   sc = scope;
+        scope = NULL;
     }
 
     unsigned dprogress_save = Module::dprogress;
@@ -441,6 +446,7 @@ void FuncDeclaration::semantic(Scope *sc)
         switch (vi)
         {
             case -1:
+        Lintro:
                 /* Didn't find one, so
                  * This is an 'introducing' function which gets a new
                  * slot in the vtbl[].
@@ -477,7 +483,7 @@ void FuncDeclaration::semantic(Scope *sc)
                 break;
 
             case -2:    // can't determine because of fwd refs
-                cd->sizeok = 2; // can't finish due to forward reference
+                cd->sizeok = SIZEOKfwd; // can't finish due to forward reference
                 Module::dprogress = dprogress_save;
                 return;
 
@@ -496,9 +502,12 @@ void FuncDeclaration::semantic(Scope *sc)
                 FuncDeclaration *fdc = ((Dsymbol *)cd->vtbl.data[vi])->isFuncDeclaration();
                 if (fdc->toParent() == parent)
                 {
+                    // fdc overrides fdv exactly, then this introduces new function.
+                    if (fdc->type->mod == fdv->type->mod && this->type->mod != fdv->type->mod)
+                        goto Lintro;
+
                     // If both are mixins, then error.
                     // If either is not, the one that is not overrides the other.
-
                     if (this->parent->isClassDeclaration() && fdc->parent->isClassDeclaration())
                         error("multiple overrides of same function");
 
@@ -562,7 +571,7 @@ void FuncDeclaration::semantic(Scope *sc)
                     break;
 
                 case -2:
-                    cd->sizeok = 2;     // can't finish due to forward reference
+                    cd->sizeok = SIZEOKfwd;     // can't finish due to forward reference
                     Module::dprogress = dprogress_save;
                     return;
 
@@ -598,7 +607,7 @@ void FuncDeclaration::semantic(Scope *sc)
                         {
                             // any error in isBaseOf() is a forward reference error, so we bail out
                             global.errors = errors;
-                            cd->sizeok = 2;    // can't finish due to forward reference
+                            cd->sizeok = SIZEOKfwd;    // can't finish due to forward reference
                             Module::dprogress = dprogress_save;
                             return;
                         }
@@ -3269,6 +3278,11 @@ void CtorDeclaration::semantic(Scope *sc)
     TypeFunction *tf = (TypeFunction *)type;
     assert(tf && tf->ty == Tfunction);
 
+    if (scope)
+    {   sc = scope;
+        scope = NULL;
+    }
+
     sc = sc->push();
     sc->stc &= ~STCstatic;              // not a static constructor
     sc->flags |= SCOPEctor;
@@ -3387,6 +3401,10 @@ void PostBlitDeclaration::semantic(Scope *sc)
     //printf("PostBlitDeclaration::semantic() %s\n", toChars());
     //printf("ident: %s, %s, %p, %p\n", ident->toChars(), Id::dtor->toChars(), ident, Id::dtor);
     //printf("stc = x%llx\n", sc->stc);
+    if (scope)
+    {   sc = scope;
+        scope = NULL;
+    }
     parent = sc->parent;
     Dsymbol *parent = toParent();
     StructDeclaration *ad = parent->isStructDeclaration();
@@ -3460,6 +3478,10 @@ void DtorDeclaration::semantic(Scope *sc)
 {
     //printf("DtorDeclaration::semantic() %s\n", toChars());
     //printf("ident: %s, %s, %p, %p\n", ident->toChars(), Id::dtor->toChars(), ident, Id::dtor);
+    if (scope)
+    {   sc = scope;
+        scope = NULL;
+    }
     parent = sc->parent;
     Dsymbol *parent = toParent();
     AggregateDeclaration *ad = parent->isAggregateDeclaration();
@@ -3551,6 +3573,11 @@ void StaticCtorDeclaration::semantic(Scope *sc)
 {
     //printf("StaticCtorDeclaration::semantic()\n");
 
+    if (scope)
+    {   sc = scope;
+        scope = NULL;
+    }
+
     if (!type)
         type = new TypeFunction(NULL, Type::tvoid, FALSE, LINKd);
 
@@ -3624,7 +3651,7 @@ int StaticCtorDeclaration::addPostInvariant()
 
 void StaticCtorDeclaration::toCBuffer(OutBuffer *buf, HdrGenState *hgs)
 {
-    if (hgs->hdrgen)
+    if (hgs->hdrgen && !hgs->tpltMember)
     {   buf->writestring("static this();");
         buf->writenl();
         return;
@@ -3679,6 +3706,11 @@ Dsymbol *StaticDtorDeclaration::syntaxCopy(Dsymbol *s)
 
 void StaticDtorDeclaration::semantic(Scope *sc)
 {
+    if (scope)
+    {   sc = scope;
+        scope = NULL;
+    }
+
     ClassDeclaration *cd = sc->scopesym->isClassDeclaration();
 
     if (!type)
@@ -3806,6 +3838,10 @@ Dsymbol *InvariantDeclaration::syntaxCopy(Dsymbol *s)
 
 void InvariantDeclaration::semantic(Scope *sc)
 {
+    if (scope)
+    {   sc = scope;
+        scope = NULL;
+    }
     parent = sc->parent;
     Dsymbol *parent = toParent();
     AggregateDeclaration *ad = parent->isAggregateDeclaration();
@@ -3886,6 +3922,11 @@ Dsymbol *UnitTestDeclaration::syntaxCopy(Dsymbol *s)
 
 void UnitTestDeclaration::semantic(Scope *sc)
 {
+    if (scope)
+    {   sc = scope;
+        scope = NULL;
+    }
+
     if (global.params.useUnitTests)
     {
         if (!type)
@@ -3968,6 +4009,11 @@ Dsymbol *NewDeclaration::syntaxCopy(Dsymbol *s)
 void NewDeclaration::semantic(Scope *sc)
 {
     //printf("NewDeclaration::semantic()\n");
+
+    if (scope)
+    {   sc = scope;
+        scope = NULL;
+    }
 
     parent = sc->parent;
     Dsymbol *parent = toParent();
@@ -4052,6 +4098,11 @@ Dsymbol *DeleteDeclaration::syntaxCopy(Dsymbol *s)
 void DeleteDeclaration::semantic(Scope *sc)
 {
     //printf("DeleteDeclaration::semantic()\n");
+
+    if (scope)
+    {   sc = scope;
+        scope = NULL;
+    }
 
     parent = sc->parent;
     Dsymbol *parent = toParent();

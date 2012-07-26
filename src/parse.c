@@ -3570,6 +3570,9 @@ Statement *Parser::parseStatement(int flags)
             goto Ldeclaration;
 
         case BASIC_TYPES:
+            // bug 7773: int.max is always a part of expression
+            if (peekNext() == TOKdot)
+                goto Lexp;
         case TOKtypedef:
         case TOKalias:
         case TOKconst:
@@ -5481,15 +5484,18 @@ Expression *Parser::parsePrimaryExp()
         }
 
         case TOKlparen:
-        {   enum TOK past = peekPastParen(&token)->value;
-
-            if (past == TOKgoesto)
-            {   // (arguments) => expression
-                goto case_delegate;
-            }
-            else if (past == TOKlcurly)
-            {   // (arguments) { statements... }
-                goto case_delegate;
+        {   Token *tk = peekPastParen(&token);
+            if (skipAttributes(tk, &tk))
+            {
+                enum TOK past = tk->value;
+                if (past == TOKgoesto)
+                {   // (arguments) => expression
+                    goto case_delegate;
+                }
+                else if (past == TOKlcurly)
+                {   // (arguments) { statements... }
+                    goto case_delegate;
+                }
             }
             // ( expression )
             nextToken();

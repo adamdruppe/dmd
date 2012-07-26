@@ -471,8 +471,10 @@ void TemplateDeclaration::semantic(Scope *sc)
     /* Remember Scope for later instantiations, but make
      * a copy since attributes can change.
      */
-    this->scope = new Scope(*sc);
-    this->scope->setNoFree();
+    if (!this->scope)
+    {   this->scope = new Scope(*sc);
+        this->scope->setNoFree();
+    }
 
     // Set up scope for parameters
     ScopeDsymbol *paramsym = new ScopeDsymbol();
@@ -1102,6 +1104,14 @@ MATCH TemplateDeclaration::deduceFunctionTemplateMatch(Scope *sc, Loc loc, Objec
                 t->objects.setDim(tuple_dim);
                 for (size_t i = 0; i < tuple_dim; i++)
                 {   Expression *farg = fargs->tdata()[fptupindex + i];
+
+                    // Check invalid arguments to detect errors early.
+                    if (farg->op == TOKerror || farg->type->ty == Terror)
+                        goto Lnomatch;
+
+                    if (!(fparam->storageClass & STClazy) && farg->type->ty == Tvoid)
+                        goto Lnomatch;
+
                     unsigned mod = farg->type->mod;
                     Type *tt;
                     MATCH m;
@@ -1378,6 +1388,11 @@ L2:
         else
         {
             Expression *farg = fargs->tdata()[i];
+
+            // Check invalid arguments to detect errors early.
+            if (farg->op == TOKerror || farg->type->ty == Terror)
+                goto Lnomatch;
+
 Lretry:
 #if 0
             printf("\tfarg->type   = %s\n", farg->type->toChars());
@@ -1407,24 +1422,15 @@ Lretry:
             if (farg->op == TOKfunction)
             {   FuncExp *fe = (FuncExp *)farg;
                 Type *tp = fparam->type;
-                Expression *e = fe->inferType(tp, 1);
+                Expression *e = fe->inferType(tp, 1, parameters);
                 if (!e)
-                {
-                    if (tp->ty == Tdelegate &&
-                        fe->tok == TOKreserved &&
-                        fe->type->ty == Tpointer && fe->type->nextOf()->ty == Tfunction)
-                    {
-                        fe = (FuncExp *)fe->copy();
-                        fe->tok = TOKdelegate;
-                        fe->type = (new TypeDelegate(fe->type->nextOf()))->merge();
-                        e = fe;
-                    }
-                    else
-                        e = farg;
-                }
+                    goto Lvarargs;
                 farg = e;
                 argtype = farg->type;
             }
+
+            if (!(fparam->storageClass & STClazy) && argtype->ty == Tvoid)
+                goto Lnomatch;
 
             /* Remove top const for dynamic array types and pointer types
              */
@@ -1440,11 +1446,11 @@ Lretry:
             if (fvarargs == 2 && i + 1 == nfparams && i + 1 < nfargs)
                 goto Lvarargs;
 
-            MATCH m = argtype->deduceType(paramscope, fparam->type, parameters, &dedtypes,
-                tf->hasWild() ? &wildmatch : NULL);
+            unsigned wm = 0;
+            MATCH m = argtype->deduceType(paramscope, fparam->type, parameters, &dedtypes, &wm);
             //printf("\tdeduceType m = %d\n", m);
-            //if (tf->hasWild())
-            //    printf("\twildmatch = x%x m = %d\n", wildmatch, m);
+            //printf("\twildmatch = x%x m = %d\n", wildmatch, m);
+            wildmatch |= wm;
 
             /* If no match, see if there's a conversion to a delegate
              */
@@ -1537,21 +1543,9 @@ Lretry:
                     {   FuncExp *fe = (FuncExp *)arg;
                         Type *tp = tb->nextOf();
 
-                        Expression *e = fe->inferType(tp, 1);
+                        Expression *e = fe->inferType(tp, 1, parameters);
                         if (!e)
-                        {
-                            if (tp->ty == Tdelegate &&
-                                fe->tok == TOKreserved &&
-                                fe->type->ty == Tpointer && fe->type->nextOf()->ty == Tfunction)
-                            {
-                                fe = (FuncExp *)fe->copy();
-                                fe->tok = TOKdelegate;
-                                fe->type = (new TypeDelegate(fe->type->nextOf()))->merge();
-                                e = fe;
-                            }
-                            else
-                                e = arg;
-                        }
+                            goto Lnomatch;
                         arg = e;
                     }
 
@@ -1979,13 +1973,14 @@ FuncDeclaration *TemplateDeclaration::deduceFunctionTemplate(Scope *sc, Loc loc,
     if (!td_best)
     {
         if (!(flags & 1))
-            error(loc, "does not match any function template declaration");
+            ::error(loc, "%s %s.%s does not match any function template declaration",
+                    kind(), parent->toPrettyChars(), ident->toChars());
         goto Lerror;
     }
     if (td_ambig)
     {
-        error(loc, "%s matches more than one template declaration, %s(%d):%s and %s(%d):%s",
-                toChars(),
+        ::error(loc, "%s %s.%s matches more than one template declaration, %s(%d):%s and %s(%d):%s",
+                kind(), parent->toPrettyChars(), ident->toChars(),
                 td_best->loc.filename,  td_best->loc.linnum,  td_best->toChars(),
                 td_ambig->loc.filename, td_ambig->loc.linnum, td_ambig->toChars());
     }
@@ -2032,8 +2027,13 @@ FuncDeclaration *TemplateDeclaration::deduceFunctionTemplate(Scope *sc, Loc loc,
 
         OutBuffer buf;
         argExpTypesToCBuffer(&buf, fargs, &hgs);
-        error(loc, "cannot deduce template function from argument types !(%s)(%s)",
-                bufa.toChars(), buf.toChars());
+        if (this->overnext)
+            ::error(loc, "%s %s.%s cannot deduce template function from argument types !(%s)(%s)",
+                    kind(), parent->toPrettyChars(), ident->toChars(),
+                    bufa.toChars(), buf.toChars());
+        else
+            error("cannot deduce template function from argument types !(%s)(%s)",
+                  bufa.toChars(), buf.toChars());
     }
     return NULL;
 }
@@ -5193,13 +5193,14 @@ TemplateDeclaration *TemplateInstance::findBestMatch(Scope *sc, Expressions *far
             // Only one template, so we can give better error message
             error("%s does not match template declaration %s", toChars(), tempdecl->toChars());
         else
-            error("%s does not match any template declaration", toChars());
+            ::error(loc, "%s %s.%s does not match any template declaration",
+                    tempdecl->kind(), tempdecl->parent->toPrettyChars(), tempdecl->ident->toChars());
         return NULL;
     }
     if (td_ambig)
     {
-        error("%s matches more than one template declaration, %s(%d):%s and %s(%d):%s",
-                toChars(),
+        ::error(loc, "%s %s.%s matches more than one template declaration, %s(%d):%s and %s(%d):%s",
+                td_best->kind(), td_best->parent->toPrettyChars(), td_best->ident->toChars(),
                 td_best->loc.filename,  td_best->loc.linnum,  td_best->toChars(),
                 td_ambig->loc.filename, td_ambig->loc.linnum, td_ambig->toChars());
     }
@@ -5256,6 +5257,11 @@ int TemplateInstance::hasNestedArgs(Objects *args)
             if (ea->op == TOKvar)
             {
                 sa = ((VarExp *)ea)->var;
+                goto Lsa;
+            }
+            if (ea->op == TOKthis)
+            {
+                sa = ((ThisExp *)ea)->var;
                 goto Lsa;
             }
             if (ea->op == TOKfunction)
@@ -5955,7 +5961,7 @@ void TemplateMixin::semantic(Scope *sc)
             semanticRun = PASSinit;
             AggregateDeclaration *ad = toParent()->isAggregateDeclaration();
             if (ad)
-                ad->sizeok = 2;
+                ad->sizeok = SIZEOKfwd;
             else
             {
                 // Forward reference

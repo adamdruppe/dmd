@@ -1217,6 +1217,7 @@ ForStatement::ForStatement(Loc loc, Statement *init, Expression *condition, Expr
     this->condition = condition;
     this->increment = increment;
     this->body = body;
+    this->nest = 0;
 }
 
 Statement *ForStatement::syntaxCopy()
@@ -1234,17 +1235,145 @@ Statement *ForStatement::syntaxCopy()
     return s;
 }
 
+/*
+ * Run semantic on init recursively.
+ * Rewrite:
+ *      for (auto x=X(), y = Y(); ...; ...) {}
+ * as:
+ *      try {
+ *          try {
+ *              for (auto x=X(), auto y=Y(); ...; ...) {}
+ *          }
+ *          finally { y.~this(); }
+ *      }
+ *      finally { x.~this(); }
+ */
+Statement *ForStatement::semanticInit(Scope *sc)
+{
+    assert(init);
+    ++nest;
+
+    Loc locinit = init->loc;
+    Statements *ainit = init->flatten(sc);
+    if (!ainit)
+        (ainit = new Statements())->push(init);
+    init = NULL;
+
+    Statement *statement = this;
+
+    for (size_t i = 0; i < ainit->dim; i++)
+    {   Statement *s = (*ainit)[i];
+        s = s->semantic(sc);
+        (*ainit)[i] = s;
+        if (s)
+        {
+            Statement *sentry;
+            Statement *sexception;
+            Statement *sfinally;
+
+            (*ainit)[i] = s->scopeCode(sc, &sentry, &sexception, &sfinally);
+
+            if (sentry)
+            {   sentry = sentry->semantic(sc);
+                if (sentry)
+                    ainit->insert(i++, sentry);
+            }
+            if (sexception)
+                sexception = sexception->semantic(sc);
+            if (sexception)
+            {   // Re-initialize this->init
+                if (i + 1 < ainit->dim)
+                {
+                    Statements *a = new Statements();
+                    for (size_t j = i + 1; j < ainit->dim; j++)
+                        a->push((*ainit)[j]);
+                    init = new CompoundStatement(0, a);
+                }
+
+                Identifier *id = Lexer::uniqueId("__o");
+                Statement *handler = sexception;
+                if (sexception->blockExit(FALSE) & BEfallthru)
+                {   handler = new ThrowStatement(0, new IdentifierExp(0, id));
+                    handler = new CompoundStatement(0, sexception, handler);
+                }
+                Catches *catches = new Catches();
+                Catch *ctch = new Catch(0, NULL, id, handler);
+                catches->push(ctch);
+                s = new TryCatchStatement(0, this, catches);
+
+                if (sfinally)
+                    s = new TryFinallyStatement(0, s, sfinally);
+                //printf("ex {{{\n");
+                s = s->semantic(sc);
+                //printf("}}}\n");
+                statement = s;
+
+                if (init)
+                {   Statements *a = init->flatten(sc);
+                    if (!a)
+                        (a = new Statements())->push(init);
+                    for (size_t j = 0; j < i + 1; j++)
+                        a->insert(j, (*ainit)[j]);
+                    init = new CompoundStatement(locinit, a);
+                }
+                break;
+            }
+            else if (sfinally)
+            {   // Re-initialize this->init
+                if (i + 1 < ainit->dim)
+                {
+                    Statements *a = new Statements();
+                    for (size_t j = i + 1; j < ainit->dim; j++)
+                        a->push((*ainit)[j]);
+                    init = new CompoundStatement(0, a);
+                }
+
+                s = new TryFinallyStatement(0, this, sfinally);
+                //printf("fi {{{\n");
+                s = s->semantic(sc);
+                //printf("}}} fi\n");
+                statement = s;
+
+                if (init)
+                {   Statements *a = init->flatten(sc);
+                    if (!a)
+                        (a = new Statements())->push(init);
+                    for (size_t j = 0; j < i + 1; j++)
+                        a->insert(j, (*ainit)[j]);
+                    init = new CompoundStatement(locinit, a);
+                }
+                break;
+            }
+        }
+    }
+    if (!init)
+    {   // whole init semantic is completely done.
+        init = new CompoundStatement(locinit, ainit);
+    }
+
+    --nest;
+    return statement;
+}
+
 Statement *ForStatement::semantic(Scope *sc)
 {
-    ScopeDsymbol *sym = new ScopeDsymbol();
-    sym->parent = sc->scopesym;
-    sc = sc->push(sym);
+    if (!nest)
+    {   ScopeDsymbol *sym = new ScopeDsymbol();
+        sym->parent = sc->scopesym;
+        sc = sc->push(sym);
+    }
+    else if (init)
+    {   // Process this->init recursively
+        return semanticInit(sc);
+    }
+
+    Statement *statement = this;
     if (init)
-        init = init->semantic(sc);
+        statement = semanticInit(sc);
+
     sc->noctor++;
     if (condition)
-    {
-        condition = condition->semantic(sc);
+    {   condition = condition->semantic(sc);
         condition = resolveProperties(sc, condition);
         condition = condition->optimize(WANTvalue);
         condition = condition->checkToBoolean(sc);
@@ -1261,18 +1390,16 @@ Statement *ForStatement::semantic(Scope *sc)
         body = body->semanticNoScope(sc);
     sc->noctor--;
 
-    sc->pop();
-    return this;
+    if (!nest)
+        sc->pop();
+    //if (!nest) statement->print();
+    return statement;
 }
 
 Statement *ForStatement::scopeCode(Scope *sc, Statement **sentry, Statement **sexception, Statement **sfinally)
 {
     //printf("ForStatement::scopeCode()\n");
-    //print();
-    if (init)
-        init = init->scopeCode(sc, sentry, sexception, sfinally);
-    else
-        Statement::scopeCode(sc, sentry, sexception, sfinally);
+    Statement::scopeCode(sc, sentry, sexception, sfinally);
     return this;
 }
 
@@ -2928,6 +3055,7 @@ SwitchStatement::SwitchStatement(Loc loc, Expression *c, Statement *b, bool isFi
 
 Statement *SwitchStatement::syntaxCopy()
 {
+    //printf("SwitchStatement::syntaxCopy(%p)\n", this);
     SwitchStatement *s = new SwitchStatement(loc,
         condition->syntaxCopy(), body->syntaxCopy(), isFinal);
     return s;
@@ -2937,7 +3065,8 @@ Statement *SwitchStatement::semantic(Scope *sc)
 {
     //printf("SwitchStatement::semantic(%p)\n", this);
     tf = sc->tf;
-    assert(!cases);             // ensure semantic() is only run once
+    if (cases)
+        return this;            // already run
     condition = condition->semantic(sc);
     condition = resolveProperties(sc, condition);
     if (condition->type->isString())
@@ -4447,7 +4576,9 @@ Catch *Catch::syntaxCopy()
 }
 
 void Catch::semantic(Scope *sc)
-{   ScopeDsymbol *sym;
+{
+    if (type && type->deco)
+        return;
 
     //printf("Catch::semantic(%s)\n", ident->toChars());
 
@@ -4464,7 +4595,7 @@ void Catch::semantic(Scope *sc)
     }
 #endif
 
-    sym = new ScopeDsymbol();
+    ScopeDsymbol *sym = new ScopeDsymbol();
     sym->parent = sc->scopesym;
     sc = sc->push(sym);
 

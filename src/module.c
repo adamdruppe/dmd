@@ -640,7 +640,14 @@ void Module::parse()
     if (md)
     {   this->ident = md->id;
         this->safe = md->safe;
-        dst = Package::resolve(md->packages, &this->parent, NULL);
+        Package *ppack = NULL;
+        dst = Package::resolve(md->packages, &this->parent, &ppack);
+        if (ppack && ppack->isModule())
+        {
+            error(loc, "package name '%s' in file %s conflicts with usage as a module name in file %s",
+                ppack->toChars(), srcname, ppack->isModule()->srcfile->toChars());
+            dst = modules;
+        }
     }
     else
     {
@@ -665,7 +672,7 @@ void Module::parse()
         {
             Package *pkg = prev->isPackage();
             assert(pkg);
-            error(loc, "from file %s conflicts with package name %s",
+            error(pkg->loc, "from file %s conflicts with package name %s",
                 srcname, pkg->toChars());
         }
     }
@@ -1171,19 +1178,24 @@ DsymbolTable *Package::resolve(Identifiers *packages, Dsymbol **pparent, Package
             else
             {
                 assert(p->isPackage());
-#if TARGET_NET  //dot net needs modules and packages with same name
-#else
-                if (p->isModule())
-                {   p->error("module and package have the same name");
-                    fatal();
-                    break;
-                }
-#endif
+                // It might already be a module, not a package, but that needs
+                // to be checked at a higher level, where a nice error message
+                // can be generated.
+                // dot net needs modules and packages with same name
             }
             parent = p;
             dst = ((Package *)p)->symtab;
             if (ppkg && !*ppkg)
                 *ppkg = (Package *)p;
+#if TARGET_NET
+#else
+            if (p->isModule())
+            {   // Return the module so that a nice error message can be generated
+                if (ppkg)
+                    *ppkg = (Package *)p;
+                break;
+            }
+#endif
         }
         if (pparent)
         {

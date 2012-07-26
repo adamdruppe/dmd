@@ -1061,6 +1061,53 @@ void test7684()
 }
 
 /**********************************/
+// 7694
+
+void match7694(alias m)()
+{
+    m.foo();    //removing this line supresses ice in both cases
+}
+
+struct T7694
+{
+    void foo(){}
+    void bootstrap()
+    {
+    //next line causes ice
+        match7694!(this)();
+    //while this works:
+        alias this p;
+        match7694!(p)();
+    }
+}
+
+/**********************************/
+// 7755
+
+template to7755(T)
+{
+    T to7755(A...)(A args)
+    {
+        return toImpl7755!T(args);
+    }
+}
+
+T toImpl7755(T, S)(S value)
+{
+    return T.init;
+}
+
+template Foo7755(T){}
+
+struct Bar7755
+{
+    void qux()
+    {
+        if (is(typeof(to7755!string(Foo7755!int)))){};
+    }
+}
+
+/**********************************/
 
        inout(U)[]  id11a(U)(        inout(U)[]  );
        inout(U[])  id11a(U)(        inout(U[])  );
@@ -1087,6 +1134,29 @@ void test11b()
     alias const(shared(int)[]) T;
     static assert(is(typeof(id11b(T.init)) == const(shared(int)[])));
 }
+
+/**********************************/
+// 7769
+
+void f7769(K)(inout(K) value){}
+void test7769()
+{
+    f7769("abc");
+}
+
+/**********************************/
+// 7812
+
+template A7812(T...) {}
+
+template B7812(alias C) if (C) {}
+
+template D7812()
+{
+    alias B7812!(A7812!(NonExistent!())) D7812;
+}
+
+static assert(!__traits(compiles, D7812!()));
 
 /**********************************/
 
@@ -1134,6 +1204,7 @@ int main()
     test7684();
     test11a();
     test11b();
+    test7769();
 
     printf("Success\n");
     return 0;

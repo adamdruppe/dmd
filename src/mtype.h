@@ -314,7 +314,7 @@ struct Type : Object
     Expression *getTypeInfo(Scope *sc);
     virtual TypeInfoDeclaration *getTypeInfoDeclaration();
     virtual int builtinTypeInfo();
-    virtual Type *reliesOnTident();
+    virtual Type *reliesOnTident(TemplateParameters *tparams = NULL);
     virtual int hasWild();
     virtual Expression *toExpression();
     virtual int hasPointers();
@@ -357,7 +357,7 @@ struct TypeNext : Type
     TypeNext(TY ty, Type *next);
     void toDecoBuffer(OutBuffer *buf, int flag);
     void checkDeprecated(Loc loc, Scope *sc);
-    Type *reliesOnTident();
+    Type *reliesOnTident(TemplateParameters *tparams = NULL);
     int hasWild();
     Type *nextOf();
     Type *makeConst();
@@ -637,7 +637,7 @@ struct TypeFunction : TypeNext
     void attributesToCBuffer(OutBuffer *buf, int mod);
     MATCH deduceType(Scope *sc, Type *tparam, TemplateParameters *parameters, Objects *dedtypes, unsigned *wildmatch = NULL);
     TypeInfoDeclaration *getTypeInfoDeclaration();
-    Type *reliesOnTident();
+    Type *reliesOnTident(TemplateParameters *tparams = NULL);
     bool hasLazyParameters();
 #if CPP_MANGLE
     void toCppMangle(OutBuffer *buf, CppMangleState *cms);
@@ -705,7 +705,7 @@ struct TypeIdentifier : TypeQualified
     Dsymbol *toDsymbol(Scope *sc);
     Type *semantic(Loc loc, Scope *sc);
     MATCH deduceType(Scope *sc, Type *tparam, TemplateParameters *parameters, Objects *dedtypes, unsigned *wildmatch = NULL);
-    Type *reliesOnTident();
+    Type *reliesOnTident(TemplateParameters *tparams = NULL);
     Expression *toExpression();
 };
 
@@ -923,7 +923,7 @@ struct TypeTuple : Type
     Type *syntaxCopy();
     Type *semantic(Loc loc, Scope *sc);
     int equals(Object *o);
-    Type *reliesOnTident();
+    Type *reliesOnTident(TemplateParameters *tparams = NULL);
     void toCBuffer2(OutBuffer *buf, HdrGenState *hgs, int mod);
     void toDecoBuffer(OutBuffer *buf, int flag);
     Expression *getProperty(Loc loc, Identifier *ident);

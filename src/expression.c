@@ -302,6 +302,121 @@ return_expr:
 }
 
 /******************************
+ * Check the tail CallExp is really property function call.
+ */
+
+void checkPropertyCall(Expression *e, Expression *emsg)
+{
+    while (e->op == TOKcomma)
+        e = ((CommaExp *)e)->e2;
+
+    if (e->op == TOKcall)
+    {   CallExp *ce = (CallExp *)e;
+        TypeFunction *tf;
+        if (ce->f)
+        {
+            tf = (TypeFunction *)ce->f->type;
+            /* If a forward reference to ce->f, try to resolve it
+             */
+            if (!tf->deco && ce->f->scope)
+            {   ce->f->semantic(ce->f->scope);
+                tf = (TypeFunction *)ce->f->type;
+            }
+        }
+        else if (ce->e1->type->ty == Tfunction)
+            tf = (TypeFunction *)ce->e1->type;
+        else if (ce->e1->type->ty == Tdelegate)
+            tf = (TypeFunction *)ce->e1->type->nextOf();
+        else if (ce->e1->type->ty == Tpointer && ce->e1->type->nextOf()->ty == Tfunction)
+            tf = (TypeFunction *)ce->e1->type->nextOf();
+        else
+            assert(0);
+
+        if (!tf->isproperty && global.params.enforcePropertySyntax)
+            ce->e1->error("not a property %s", emsg->toChars());
+    }
+}
+
+/******************************
+ * Pull out property with UFCS.
+ */
+
+Expression *resolveUFCSProperties(Scope *sc, Expression *e1, Expression *e2 = NULL)
+{
+    Expression *e = NULL;
+    Expression *eleft;
+    Identifier *ident;
+    Objects* tiargs;
+    Loc loc = e1->loc;
+
+    if (e1->op == TOKdot)
+    {
+        DotIdExp *die = (DotIdExp *)e1;
+        eleft  = die->e1;
+        ident  = die->ident;
+        tiargs = NULL;
+        goto L1;
+    }
+    else if (e1->op == TOKdotti)
+    {
+        DotTemplateInstanceExp *dti;
+        dti = (DotTemplateInstanceExp *)e1;
+        eleft  = dti->e1;
+        ident  = dti->ti->name;
+        tiargs = dti->ti->tiargs;
+    L1:
+        /* .ident
+         * .ident!tiargs
+         */
+        e = new IdentifierExp(loc, Id::empty);
+        if (tiargs)
+            e = new DotTemplateInstanceExp(loc, e, ident, tiargs);
+        else
+            e = new DotIdExp(loc, e, ident);
+
+        Expressions *arguments = new Expressions();
+        /* .f(e1, e2)
+         */
+        if (e2)
+        {
+            arguments->setDim(2);
+            (*arguments)[0] = eleft;
+            (*arguments)[1] = e2;
+
+            Expression *ex = e->syntaxCopy();
+            e = new CallExp(loc, e, arguments);
+            e = e->trySemantic(sc);
+            if (e)
+            {   checkPropertyCall(e, e1);
+                return e->semantic(sc);
+            }
+            e = ex;
+        }
+
+        /* .f(e1)
+         * .f(e1) = e2
+         */
+        {
+            arguments->setDim(1);
+            (*arguments)[0] = eleft;
+            e = new CallExp(loc, e, arguments);
+            e = e->trySemantic(sc);
+            if (!e)
+                goto Leprop;
+            checkPropertyCall(e, e1);
+            if (e2)
+                e = new AssignExp(loc, e, e2);
+            return e->semantic(sc);
+        }
+    }
+    return e;
+
+Leprop:
+    e1->error("not a property %s", e1->toChars());
+    return new ErrorExp();
+}
+
+/******************************
  * Perform semantic() on an array of Expressions.
  */
 
@@ -767,9 +882,10 @@ Type *functionParameters(Loc loc, Scope *sc, TypeFunction *tf,
             if (tf->varargs == 2 && i + 1 == nparams)
             {
                 //printf("\t\tvarargs == 2, p->type = '%s'\n", p->type->toChars());
-                if (arg->implicitConvTo(p->type))
+                MATCH m;
+                if ((m = arg->implicitConvTo(p->type)) != MATCHnomatch)
                 {
-                    if (p->type->nextOf() && arg->implicitConvTo(p->type->nextOf()))
+                    if (p->type->nextOf() && arg->implicitConvTo(p->type->nextOf()) >= m)
                         goto L2;
                     else if (nargs != nparams)
                     {   error(loc, "expected %llu function arguments, not %llu", (ulonglong)nparams, (ulonglong)nargs);
@@ -2806,10 +2922,10 @@ Lagain:
     }
 
     TemplateInstance *ti = s->isTemplateInstance();
-    if (ti && !global.errors)
+    if (ti)
     {   if (!ti->semanticRun)
             ti->semantic(sc);
-        s = ti->inst->toAlias();
+        s = ti->toAlias();
         if (!s->isTemplateInstance())
             goto Lagain;
         e = new ScopeExp(loc, ti);
@@ -3672,6 +3788,9 @@ Expression *AssocArrayLiteralExp::semantic(Scope *sc)
     keys = arrayExpressionToCommonType(sc, keys, &tkey);
     values = arrayExpressionToCommonType(sc, values, &tvalue);
 
+    if (tkey == Type::terror || tvalue == Type::terror)
+        return new ErrorExp;
+
     type = new TypeAArray(tvalue, tkey);
     type = type->semantic(loc, sc);
     return this;
@@ -3738,13 +3857,17 @@ Expression *StructLiteralExp::syntaxCopy()
 
 Expression *StructLiteralExp::semantic(Scope *sc)
 {   Expression *e;
-    size_t nfields = sd->fields.dim - sd->isnested;
 
 #if LOGSEMANTIC
     printf("StructLiteralExp::semantic('%s')\n", toChars());
 #endif
     if (type)
         return this;
+
+    sd->size(loc);
+    if (sd->sizeok != SIZEOKdone)
+        return new ErrorExp();
+    size_t nfields = sd->fields.dim - sd->isnested;
 
     elements = arrayExpressionSemantic(elements, sc);   // run semantic() on each element
     expandTuples(elements);
@@ -6549,11 +6672,10 @@ Expression *DotIdExp::semantic(Scope *sc, int flag)
         unsigned errors = global.startGagging();
         Type *t1 = e1->type;
         e = e1->type->dotExp(sc, e1, ident);
-        if (global.endGagging(errors))    // if failed to find the property
+        if (global.endGagging(errors))  // if failed to find the property
         {
             e1->type = t1;              // kludge to restore type
-            e = new DotIdExp(loc, new IdentifierExp(loc, Id::empty), ident);
-            e = new CallExp(loc, e, e1);
+            e = resolveUFCSProperties(sc, this);
         }
         e = e->semantic(sc);
         return e;
@@ -6871,13 +6993,7 @@ Expression *DotTemplateInstanceExp::semantic(Scope *sc, int flag)
         e = ((DotIdExp *)e)->semantic(sc, 1);
         if (global.endGagging(errors) && !flag)
         {
-            e = new DotTemplateInstanceExp(loc,
-                            new IdentifierExp(loc, Id::empty),
-                            ti->name, ti->tiargs);
-            e = new CallExp(loc, e, e1);
-            e = e->semantic(sc);
-            e = resolveProperties(sc, e);
-            return e;
+            return resolveUFCSProperties(sc, this);
         }
     }
 
@@ -7428,7 +7544,10 @@ Lagain:
             if (ve->var->storage_class & STClazy)
             {
                 // lazy paramaters can be called without violating purity and safety
-                TypeFunction *tf = new TypeFunction(NULL, ve->var->type, 0, LINKd, STCsafe | STCpure);
+                Type *tw = ve->var->type;
+                Type *tc = ve->var->type->substWildTo(MODconst);
+                TypeFunction *tf = new TypeFunction(NULL, tc, 0, LINKd, STCsafe | STCpure);
+                (tf = (TypeFunction *)tf->semantic(loc, sc))->next = tw;    // hack for bug7757
                 TypeDelegate *t = new TypeDelegate(tf);
                 ve->type = t->semantic(loc, sc);
             }
@@ -9672,6 +9791,7 @@ Expression *AssignExp::semantic(Scope *sc)
         Identifier *id = Id::index;
 
         ae->e1 = ae->e1->semantic(sc);
+        ae->e1 = resolveProperties(sc, ae->e1);
         Type *t1 = ae->e1->type->toBasetype();
         if (t1->ty == Tstruct)
         {
@@ -9832,29 +9952,7 @@ Expression *AssignExp::semantic(Scope *sc)
             e1 = dti->semantic(sc, 1);
             if (global.endGagging(errors) || e1->op == TOKerror)
             {
-                Expressions *arguments = new Expressions();
-                arguments->setDim(2);
-                (*arguments)[0] = dti->e1;
-                (*arguments)[1] = e2;
-
-                Expression *e;
-                e = new DotTemplateInstanceExp(loc, new IdentifierExp(loc, Id::empty),
-                        dti->ti->name, dti->ti->tiargs);
-
-                Expression *ex = e->syntaxCopy();
-
-                e = new CallExp(loc, e, arguments);
-                e = e->trySemantic(sc);
-                if (e)
-                    return e;
-
-                e = new CallExp(loc, ex, dti->e1);
-                e = e->trySemantic(sc);
-                if (!e)
-                {   error("not a property");
-                    return new ErrorExp();
-                }
-                e1 = e;
+                return resolveUFCSProperties(sc, dti, e2);
             }
         }
     }
@@ -9868,28 +9966,7 @@ Expression *AssignExp::semantic(Scope *sc)
             e1 = die->semantic(sc, 1);
             if (global.endGagging(errors) || e1->op == TOKerror)
             {
-                Expressions *arguments = new Expressions();
-                arguments->setDim(2);
-                (*arguments)[0] = die->e1;
-                (*arguments)[1] = e2;
-
-                Expression *e;
-                e = new DotIdExp(loc, new IdentifierExp(loc, Id::empty), die->ident);
-
-                Expression *ex = e->syntaxCopy();
-
-                e = new CallExp(loc, e, arguments);
-                e = e->trySemantic(sc);
-                if (e)
-                    return e;
-
-                e = new CallExp(loc, ex, die->e1);
-                e = e->trySemantic(sc);
-                if (!e)
-                {   error("not a property, %s", die->toChars());
-                    return new ErrorExp();
-                }
-                e1 = e;
+                return resolveUFCSProperties(sc, die, e2);
             }
         }
     }
@@ -10269,8 +10346,16 @@ Ltupleassign:
     }
     else
 #endif
+    // If it is a array, get the element type. Note that it may be
+    // multi-dimensional.
+    Type *telem = t1;
+    while (telem->ty == Tarray)
+        telem = telem->nextOf();
+
+    // Check for block assignment. If it is of type void[], void[][], etc,
+    // '= null' is the only allowable block assignment (Bug 7493)
     if (e1->op == TOKslice &&
-        t1->nextOf() &&
+        t1->nextOf() && (telem->ty != Tvoid || e2->op == TOKnull) &&
         e2->implicitConvTo(t1->nextOf())
        )
     {   // memset
