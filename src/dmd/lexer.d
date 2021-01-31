@@ -1612,6 +1612,7 @@ class Lexer
         stringPostfix(result);
     }
 
+    // FIXME: this PoC only does i"", but the DIP says all string literal types should work.
     private void interpolatedStringConstant(Token* result)
     {
         result.value = TOK.interp;
@@ -1626,8 +1627,9 @@ class Lexer
                 p++;
                 Token tmp;
                 stringPostfix(&tmp);
-                foreach(ref p; result.interp.components)
-                    p.postfix = tmp.postfix;
+                foreach(idx, ref p; result.interp.components)
+                    if (idx % 2 == 0)
+                        p.postfix = tmp.postfix;
                 return;
             }
             Token* part = new Token;
@@ -1720,6 +1722,12 @@ class Lexer
                 case '&':
                     c = escapeSequence();
                     stringbuffer.writeUTF8(c);
+                    continue;
+                case '$':
+                    if (!interpolating)
+                        goto default;
+                    p++;
+                    stringbuffer.writeUTF8('$');
                     continue;
                 default:
                     c = escapeSequence();
