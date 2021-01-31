@@ -4870,24 +4870,6 @@ struct ASTBase
         }
     }
 
-    extern (C++) final class InterpExp : Expression
-    {
-        extern (D) this(const ref Loc loc, InterpolatedToken tok)
-        {
-            super(loc, TOK.interp, __traits(classInstanceSize, InterpExp));
-            this.interp = tok;
-            this.type = type;
-        }
-
-        override void accept(Visitor v)
-        {
-            v.visit(this);
-        }
-
-        InterpolatedToken interp;
-    }
-
-
     extern (C++) final class TypeidExp : Expression
     {
         RootObject obj;

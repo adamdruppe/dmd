@@ -7904,7 +7904,6 @@ final class Parser(AST) : Lexer
             break;
 
         case TOK.interp:
-            //e = new AST.InterpExp(loc, token.interp);
             auto values = new AST.Expressions();
             foreach(idx, part; token.interp.components)
             {
