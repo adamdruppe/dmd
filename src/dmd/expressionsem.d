@@ -3095,6 +3095,28 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
         for (size_t i = 0; i < exp.exps.dim; i++)
         {
             Expression e = (*exp.exps)[i];
+
+            if (exp.isStringInterp)
+            {
+                auto values = new Expressions();
+                if (i % 2 == 0)
+                {
+                    auto tiargs = new Objects();
+                    tiargs.push(e);
+
+                    Expression id = new IdentifierExp(exp.loc, Id.empty);
+                    auto dotid = new DotIdExp(exp.loc, id, Id.object);
+
+                    auto dt = new DotTemplateInstanceExp(exp.loc, dotid, Identifier.idPool("interp"), tiargs);
+
+                    auto arguments = new Expressions();
+                    Expression ce = new CallExp(exp.loc, dt, arguments);
+
+                    e = expressionSemantic(ce, sc);
+                }
+                // FIXME: the implicit conversion to string should work on this object somehow
+            }
+
             e = e.expressionSemantic(sc);
             if (!e.type)
             {

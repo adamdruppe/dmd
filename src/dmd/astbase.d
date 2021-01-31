@@ -5271,6 +5271,16 @@ struct ASTBase
         Expression e0;
         Expressions* exps;
 
+	bool isStringInterp;
+
+        extern (D) this(const ref Loc loc, Expressions* exps, bool isStringInterp)
+	{
+            assert(isStringInterp);
+            this.isStringInterp = isStringInterp;
+
+            this(loc, exps);
+	}
+
         extern (D) this(const ref Loc loc, Expression e0, Expressions* exps)
         {
             super(loc, TOK.tuple, __traits(classInstanceSize, TupleExp));

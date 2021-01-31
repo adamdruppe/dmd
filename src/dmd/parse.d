@@ -7909,7 +7909,6 @@ final class Parser(AST) : Lexer
             {
                 if (idx % 2 == 0)
                 {
-                    // FIXME: build the call to the druntime object.interp here
                     values.push(new AST.StringExp(loc, part.ustring[0 .. part.len], part.len, 1, part.postfix));
                 }
                 else
@@ -7920,7 +7919,7 @@ final class Parser(AST) : Lexer
                 }
             }
             // FIXME: the implicit conversion to string should work on this object somehow
-            e = new AST.TupleExp(loc, values);
+            e = new AST.TupleExp(loc, values, true);
             nextToken();
             break;
 
