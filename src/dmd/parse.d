@@ -69,6 +69,7 @@ immutable PREC[TOK.max_] precedence =
     TOK.complex80 : PREC.primary,
     TOK.null_ : PREC.primary,
     TOK.string_ : PREC.primary,
+    TOK.interp : PREC.primary,
     TOK.arrayLiteral : PREC.primary,
     TOK.assocArrayLiteral : PREC.primary,
     TOK.classReference : PREC.primary,
@@ -2125,6 +2126,7 @@ final class Parser(AST) : Lexer
         case TOK.wcharLiteral:
         case TOK.dcharLiteral:
         case TOK.string_:
+	case TOK.interp:
         case TOK.hexadecimalString:
         case TOK.file:
         case TOK.fileFullPath:
@@ -5614,6 +5616,7 @@ final class Parser(AST) : Lexer
         case TOK.true_:
         case TOK.false_:
         case TOK.string_:
+	case TOK.interp:
         case TOK.hexadecimalString:
         case TOK.leftParentheses:
         case TOK.cast_:
@@ -7078,6 +7081,7 @@ final class Parser(AST) : Lexer
                     case TOK.wcharLiteral:
                     case TOK.dcharLiteral:
                     case TOK.string_:
+		    case TOK.interp:
                     case TOK.hexadecimalString:
                     case TOK.file:
                     case TOK.fileFullPath:
@@ -7899,6 +7903,26 @@ final class Parser(AST) : Lexer
             nextToken();
             break;
 
+        case TOK.interp:
+            //e = new AST.InterpExp(loc, token.interp);
+            auto values = new AST.Expressions();
+            foreach(idx, part; token.interp.components)
+            {
+                if (idx % 2 == 0)
+                {
+                    values.push(new AST.StringExp(loc, part.ustring[0 .. part.len]));
+                }
+                else
+                {
+                    scope p = new Parser(mod, part.ustring[0 .. part.len], false);
+                    p.nextToken();
+                    values.push(p.parseAssignExp());
+                }
+            }
+            e = new AST.TupleExp(loc, values);
+            nextToken();
+            break;
+
         case TOK.file:
             {
                 const(char)* s = loc.filename ? loc.filename : mod.ident.toChars();
@@ -8565,6 +8589,7 @@ final class Parser(AST) : Lexer
                         case TOK.wcharLiteral:
                         case TOK.dcharLiteral:
                         case TOK.string_:
+			case TOK.interp:
                             version (none)
                             {
                             case TOK.tilde:

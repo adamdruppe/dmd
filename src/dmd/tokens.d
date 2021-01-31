@@ -287,6 +287,8 @@ enum TOK : ubyte
     objcClassReference,
     vectorArray,
 
+    interp,
+
     max_,
 }
 
@@ -432,6 +434,12 @@ shared static this() nothrow
     }
 }
 
+struct InterpolatedToken
+{
+    Token*[] components; // all are TOKstring types, indexes 0,2,4... are the strings, indexes 1,3,5... are the interpolated components (stored like token strings)
+    ubyte postfix;
+}
+
 /***********************************************************
  */
 extern (C++) struct Token
@@ -457,6 +465,8 @@ extern (C++) struct Token
             uint len;
             ubyte postfix; // 'c', 'w', 'd'
         }
+
+        InterpolatedToken interp;
 
         Identifier ident;
     }
@@ -673,6 +683,8 @@ extern (C++) struct Token
         TOK.onScopeFailure: "scope(failure)",
         TOK.delegatePointer: "delegateptr",
 
+        TOK.interp: "interpolated",
+
         // Finish up
         TOK.reserved: "reserved",
         TOK.remove: "remove",
@@ -806,6 +818,25 @@ nothrow:
         case TOK.imaginary80Literal:
             CTFloat.sprint(&buffer[0], 'g', floatvalue);
             strcat(&buffer[0], "Li");
+            break;
+        case TOK.interp:
+            {
+                OutBuffer buf;
+                buf.writeByte('i');
+                buf.writeByte('"');
+                foreach(idx, item; interp.components)
+                {
+                    if(idx % 2 == 0)
+                        buf.printf("%s", item.toChars());
+                    else
+                        buf.printf("${%s}", item.toChars());
+                }
+                buf.writeByte('"');
+                if(interp.postfix)
+                    buf.writeByte(interp.postfix);
+                buf.writeByte(0);
+                p = buf.extractSlice().ptr;
+            }
             break;
         case TOK.string_:
             {

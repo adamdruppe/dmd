@@ -2383,6 +2383,25 @@ extern (C++) final class SuperExp : ThisExp
     }
 }
 
+/+
+extern (C++) final class InterpExp : TupleExp
+{
+    extern (D) this(const ref Loc loc, InterpolatedToken tok)
+    {
+        super(loc, TOK.interp, __traits(classInstanceSize, InterpExp));
+        this.interp = tok;
+        //this.type = Ttuple;
+    }
+
+    override void accept(Visitor v)
+    {
+        v.visit(this);
+    }
+
+    InterpolatedToken interp;
+}
++/
+
 /***********************************************************
  * http://dlang.org/spec/expression.html#null
  */

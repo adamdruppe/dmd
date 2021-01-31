@@ -442,6 +442,15 @@ class Lexer
                 hexString.write(start[0 .. p - start]);
                 error("Built-in hex string literals are obsolete, use `std.conv.hexString!%s` instead.", hexString.extractChars());
                 return;
+            case 'i':
+                if (p[1] == '"')
+                {
+                    p++;
+                    interpolatedStringConstant(t);
+                    return;
+                }
+                else
+                    goto case_ident;
             case 'q':
                 if (p[1] == '"')
                 {
@@ -468,7 +477,7 @@ class Lexer
             case 'f':
             case 'g':
             case 'h':
-            case 'i':
+                /*case 'i':*/
             case 'j':
             case 'k':
             case 'l':
@@ -1603,6 +1612,36 @@ class Lexer
         stringPostfix(result);
     }
 
+    private void interpolatedStringConstant(Token* result)
+    {
+        result.value = TOK.interp;
+        result.interp = InterpolatedToken.init;
+        const start = loc();
+        const pstart = ++p;
+
+        while (true)
+        {
+            if (*p == '"')
+            {
+                p++;
+                Token tmp;
+                stringPostfix(&tmp);
+                foreach(ref p; result.interp.components)
+                    p.postfix = tmp.postfix;
+                return;
+            }
+            Token* part = new Token;
+            escapeStringConstant(part, true);
+            result.interp.components ~= part;
+            if (*p == '{')
+            {
+                part = new Token;
+                tokenStringConstant(part, false);
+                result.interp.components ~= part;
+            }
+        }
+    }
+
     /**
     Lex a token string. Some examples of token strings are:
     ---
@@ -1614,7 +1653,7 @@ class Lexer
     Params:
         result = pointer to the token that accepts the result
     */
-    private void tokenStringConstant(Token* result)
+    private void tokenStringConstant(Token* result, bool allowStringPostfix = true)
     {
         result.value = TOK.string_;
 
@@ -1636,7 +1675,8 @@ class Lexer
                 if (--nest == 0)
                 {
                     result.setString(pstart, p - 1 - pstart);
-                    stringPostfix(result);
+                    if (allowStringPostfix)
+                        stringPostfix(result);
                     return;
                 }
                 continue;
@@ -1657,13 +1697,15 @@ class Lexer
     of the string.
     Params:
         t = the token to set the resulting string to
+        interpolating = if this is inside an interpolated token, if true it returns upon ${ or "
     */
-    private void escapeStringConstant(Token* t)
+    private void escapeStringConstant(Token* t, bool interpolating = false)
     {
         t.value = TOK.string_;
 
         const start = loc();
-        p++;
+        if (!interpolating)
+            p++;
         stringbuffer.setsize(0);
         while (1)
         {
@@ -1693,8 +1735,21 @@ class Lexer
                 c = '\n'; // treat EndOfLine as \n character
                 endOfLine();
                 break;
+            case '$':
+                if (!interpolating)
+                    goto default;
+                if (*p != '{')
+                    goto default;
+
+                t.setString(stringbuffer);
+                return;
             case '"':
                 t.setString(stringbuffer);
+                if (interpolating)
+                {
+                    p--;
+                    return;
+                }
                 stringPostfix(t);
                 return;
             case 0:
